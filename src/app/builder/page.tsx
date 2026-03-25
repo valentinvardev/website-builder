@@ -673,10 +673,15 @@ export default function BuilderPage() {
                   </div>
                 </div>
                 {entry.open && (
-                  <>
+                  <div className="relative">
+                    {/* hierarchy guide line */}
+                    <div
+                      className="absolute top-0 bottom-1 w-px bg-white/10"
+                      style={{ left: `${8 + depth * 16 + 11}px` }}
+                    />
                     {renderTree(entry.path, depth + 1)}
                     {addingIn === entry.path && <AddInput depth={depth + 1} inPath={entry.path} />}
-                  </>
+                  </div>
                 )}
               </div>
             );
