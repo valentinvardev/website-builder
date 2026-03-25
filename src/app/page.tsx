@@ -50,7 +50,7 @@ export default function HomePage() {
           }}
         />
 
-        <div className="relative mx-auto max-w-5xl px-6 text-center">
+        <div className="relative mx-auto max-w-5xl px-6 text-center mt-12">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/10 px-4 py-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
             <span className="text-xs font-medium text-violet-300">Free to use · Powered by Llama 3.3</span>
