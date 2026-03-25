@@ -1,4 +1,7 @@
-import { auth } from "~/server/auth";
+import NextAuth from "next-auth";
+import { edgeAuthConfig } from "~/server/auth/edge-config";
+
+const { auth } = NextAuth(edgeAuthConfig);
 
 export default auth((req) => {
   if (!req.auth && req.nextUrl.pathname.startsWith("/builder")) {
