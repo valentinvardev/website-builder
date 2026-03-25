@@ -54,7 +54,7 @@ export default function HomePage() {
         <div className="relative mx-auto max-w-5xl px-6 text-center">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/10 px-4 py-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
-            <span className="text-xs font-medium text-violet-300">Powered by Claude AI</span>
+            <span className="text-xs font-medium text-violet-300">Powered by Gemini AI</span>
           </div>
 
           <h1 className="mb-6 text-6xl font-bold leading-[1.08] tracking-tight md:text-7xl lg:text-8xl">

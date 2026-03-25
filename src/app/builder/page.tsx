@@ -155,7 +155,10 @@ export default function BuilderPage() {
         }),
       });
 
-      if (!res.ok || !res.body) throw new Error("Generation failed");
+      if (!res.ok || !res.body) {
+        const errBody = await res.text();
+        throw new Error(`Generation failed (${res.status}): ${errBody}`);
+      }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();

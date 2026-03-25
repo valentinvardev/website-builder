@@ -1,4 +1,4 @@
-import { createBrowserClient } from "@supabase/auth-helpers-nextjs";
+import { createBrowserClient } from "@supabase/ssr";
 
 /**
  * Browser-side (Client Component) Supabase client.

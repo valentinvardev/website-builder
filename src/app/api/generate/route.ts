@@ -1,7 +1,7 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { env } from "~/env";
 
-const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
 
 const SYSTEM_PROMPT = `You are Surcodia, an expert web designer and developer. Your job is to generate complete, beautiful, production-quality HTML websites based on user prompts.
 
@@ -19,33 +19,42 @@ Rules:
 export async function POST(req: Request) {
   const body = await req.json() as { messages: { role: string; content: string }[] };
 
-  const stream = await client.messages.stream({
-    model: "claude-opus-4-6",
-    max_tokens: 8096,
-    system: SYSTEM_PROMPT,
-    messages: body.messages.map((m) => ({
-      role: m.role as "user" | "assistant",
-      content: m.content,
-    })),
+  const history = body.messages.slice(0, -1).map((m) => ({
+    role: m.role === "user" ? "user" : "model",
+    parts: [{ text: m.content }],
+  }));
+
+  const lastMessage = body.messages[body.messages.length - 1]!;
+
+  const model = genAI.getGenerativeModel({
+    model: "gemini-2.0-flash",
+    systemInstruction: SYSTEM_PROMPT,
   });
 
-  const encoder = new TextEncoder();
+  const chat = model.startChat({ history });
 
-  const readable = new ReadableStream({
-    async start(controller) {
-      for await (const chunk of stream) {
-        if (
-          chunk.type === "content_block_delta" &&
-          chunk.delta.type === "text_delta"
-        ) {
-          controller.enqueue(encoder.encode(chunk.delta.text));
+  try {
+    const result = await chat.sendMessageStream(lastMessage.content);
+
+    const encoder = new TextEncoder();
+
+    const readable = new ReadableStream({
+      async start(controller) {
+        for await (const chunk of result.stream) {
+          controller.enqueue(encoder.encode(chunk.text()));
         }
-      }
-      controller.close();
-    },
-  });
+        controller.close();
+      },
+    });
 
-  return new Response(readable, {
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
-  });
+    return new Response(readable, {
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  } catch (err) {
+    console.error("[/api/generate] Gemini error:", err);
+    return new Response(JSON.stringify({ error: String(err) }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 }
