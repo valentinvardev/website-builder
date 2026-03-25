@@ -209,6 +209,8 @@ export default function BuilderPage() {
   const [toast, setToast] = useState<string | null>(null);
   const [phraseIndex, setPhraseIndex] = useState(0);
   const [phraseVisible, setPhraseVisible] = useState(true);
+  const [deployState, setDeployState] = useState<"idle" | "deploying" | "deployed">("idle");
+  const [showDeployModal, setShowDeployModal] = useState(false);
 
   // Editor
   const [selectedFile, setSelectedFile] = useState<string>("index.html");
@@ -528,6 +530,17 @@ export default function BuilderPage() {
     showToast("Share link copied to clipboard!");
   }
 
+  function handleDeploy() {
+    if (!generatedHtml) { showToast("Generate a site first!"); return; }
+    if (deployState === "deployed") { setShowDeployModal(true); return; }
+    if (deployState === "deploying") return;
+    setDeployState("deploying");
+    setTimeout(() => {
+      setDeployState("deployed");
+      setShowDeployModal(true);
+    }, 2600);
+  }
+
   async function openProjectDirect(project: SavedProject) {
     const res = await fetch(`/api/projects/${project.id}`);
     const full = await res.json() as SavedProject & { html: string; messages?: string; files?: string };
@@ -581,6 +594,8 @@ export default function BuilderPage() {
     setPreviewPage("index.html");
     setShowSidebar(false);
     setSelectedProject(null);
+    setDeployState("idle");
+    setShowDeployModal(false);
     showToast(`Loaded "${project.name}"`);
   }
 
@@ -861,13 +876,36 @@ export default function BuilderPage() {
 
           {/* Deploy */}
           <button
-            onClick={() => currentShareId ? copyShareLink() : showToast("Generate a site first!")}
-            className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold transition-all hover:bg-violet-500 hover:shadow-lg hover:shadow-violet-500/25"
+            onClick={handleDeploy}
+            disabled={deployState === "deploying"}
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all disabled:cursor-not-allowed ${
+              deployState === "deployed"
+                ? "bg-green-600 hover:bg-green-500 hover:shadow-lg hover:shadow-green-500/25"
+                : "bg-violet-600 hover:bg-violet-500 hover:shadow-lg hover:shadow-violet-500/25 disabled:opacity-70"
+            }`}
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
-            </svg>
-            Deploy
+            {deployState === "deploying" ? (
+              <>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="animate-spin">
+                  <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                </svg>
+                Deploying...
+              </>
+            ) : deployState === "deployed" ? (
+              <>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M20 6L9 17l-5-5"/>
+                </svg>
+                Deployed
+              </>
+            ) : (
+              <>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 19V5M5 12l7-7 7 7"/>
+                </svg>
+                Deploy
+              </>
+            )}
           </button>
 
           <div className="h-4 w-px bg-white/10" />
@@ -1266,6 +1304,133 @@ export default function BuilderPage() {
           )}
         </div>
       </div>
+
+      {/* Deploying overlay */}
+      {deployState === "deploying" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+          <div className="relative flex flex-col items-center gap-6">
+            {/* Spinning rings */}
+            <div className="relative flex h-24 w-24 items-center justify-center">
+              <div className="absolute h-24 w-24 rounded-full border-2 border-violet-500/20" />
+              <div className="absolute h-24 w-24 animate-spin rounded-full border-2 border-transparent border-t-violet-500" style={{ animationDuration: "1s" }} />
+              <div className="absolute h-16 w-16 animate-spin rounded-full border-2 border-transparent border-t-indigo-400" style={{ animationDuration: "0.7s", animationDirection: "reverse" }} />
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-indigo-600">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+                  <path d="M12 19V5M5 12l7-7 7 7"/>
+                </svg>
+              </div>
+            </div>
+            <div className="text-center">
+              <p className="text-lg font-semibold text-white">Publishing your site</p>
+              <p className="mt-1 text-sm text-white/40">Bundling assets and generating your share link...</p>
+            </div>
+            {/* Progress dots */}
+            <div className="flex items-center gap-2">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <div key={i} className="h-1.5 w-1.5 animate-pulse rounded-full bg-violet-400" style={{ animationDelay: `${i * 0.15}s` }} />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Deploy Modal */}
+      {showDeployModal && deployState === "deployed" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowDeployModal(false)} />
+          <div className="animate-slide-up relative flex w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0d0d16] shadow-2xl">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-white/5 px-6 py-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-green-500/15 ring-1 ring-green-500/30">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-green-400">
+                    <path d="M20 6L9 17l-5-5"/>
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-white">Deployment successful</p>
+                  <p className="text-xs text-white/40">{projectName}</p>
+                </div>
+              </div>
+              <button onClick={() => setShowDeployModal(false)} className="rounded-lg border border-white/10 bg-white/5 p-1.5 text-white/40 transition-all hover:text-white">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 6L6 18M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+
+            {/* Status row */}
+            <div className="flex items-center gap-6 border-b border-white/5 px-6 py-3">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-green-400" />
+                <span className="text-xs font-medium text-green-400">Live</span>
+              </div>
+              <div className="h-3 w-px bg-white/10" />
+              <div className="flex items-center gap-1.5 text-xs text-white/40">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                </svg>
+                {1 + fileSystem.filter((e) => e.type === "file").length} file{fileSystem.filter((e) => e.type === "file").length !== 0 ? "s" : ""}
+              </div>
+              <div className="h-3 w-px bg-white/10" />
+              <div className="text-xs text-white/40">
+                {new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+              </div>
+            </div>
+
+            {/* Share link */}
+            <div className="border-b border-white/5 px-6 py-4">
+              <p className="mb-2 text-xs font-medium text-white/40">Share URL</p>
+              <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-white/30">
+                  <circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 010 20M12 2a15.3 15.3 0 000 20"/>
+                </svg>
+                <span className="flex-1 truncate text-xs text-white/60 font-mono">
+                  {typeof window !== "undefined" ? window.location.origin : ""}/api/share/{currentShareId}
+                </span>
+                <button
+                  onClick={() => copyShareLink()}
+                  className="shrink-0 rounded-lg bg-violet-600/80 px-3 py-1 text-xs font-medium text-white transition-all hover:bg-violet-500"
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+
+            {/* Preview */}
+            <div className="px-6 py-4">
+              <p className="mb-2 text-xs font-medium text-white/40">Preview</p>
+              <div className="overflow-hidden rounded-xl border border-white/10 bg-white" style={{ height: "220px" }}>
+                <iframe srcDoc={previewHtml} className="h-full w-full" title="Deploy preview" sandbox="allow-scripts" style={{ transform: "scale(0.6)", transformOrigin: "top left", width: "167%", height: "167%" }} />
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center justify-end gap-2 border-t border-white/5 px-6 py-4">
+              <button
+                onClick={() => { setShowDeployModal(false); setPanelMode("editor"); }}
+                className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-xs font-medium text-white/60 transition-all hover:bg-white/10 hover:text-white"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+                </svg>
+                View files
+              </button>
+              <button
+                onClick={() => { setShowDeployModal(false); setPanelMode("preview"); }}
+                className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold transition-all hover:bg-violet-500 hover:shadow-lg hover:shadow-violet-500/25"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
+                </svg>
+                Open builder
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Project Modal */}
       {selectedProject && (
