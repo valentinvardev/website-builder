@@ -619,19 +619,22 @@ export default function BuilderPage() {
 
           if (entry.type === "folder") {
             return (
-              <div key={entry.path}>
+              <div
+                key={entry.path}
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragOverPath(entry.path); }}
+                onDragLeave={(e) => { e.stopPropagation(); if (!(e.currentTarget as Element).contains(e.relatedTarget as Node)) setDragOverPath(null); }}
+                onDrop={(e) => {
+                  e.preventDefault(); e.stopPropagation(); setDragOverPath(null);
+                  const dragged = draggedPathRef.current;
+                  if (dragged && dragged !== entry.path && !dragged.startsWith(entry.path + "/"))
+                    fsMoveEntry(dragged, entry.path);
+                  draggedPathRef.current = null;
+                }}
+              >
                 <div
                   draggable
                   onDragStart={(e) => { e.stopPropagation(); draggedPathRef.current = entry.path; }}
                   onDragEnd={() => { draggedPathRef.current = null; setDragOverPath(null); }}
-                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragOverPath(entry.path); }}
-                  onDragLeave={(e) => { e.stopPropagation(); setDragOverPath(null); }}
-                  onDrop={(e) => {
-                    e.preventDefault(); e.stopPropagation(); setDragOverPath(null);
-                    if (draggedPathRef.current && draggedPathRef.current !== entry.path)
-                      fsMoveEntry(draggedPathRef.current, entry.path);
-                    draggedPathRef.current = null;
-                  }}
                   onClick={() => fsToggleFolder(entry.path)}
                   className={`group flex cursor-pointer items-center gap-1.5 rounded-md py-1 pr-2 text-white/50 transition-all hover:bg-white/5 hover:text-white/80 ${dragOverPath === entry.path ? "bg-violet-500/20 text-white ring-1 ring-violet-500/40" : ""}`}
                   style={{ paddingLeft: `${indent}px` }}
@@ -674,13 +677,13 @@ export default function BuilderPage() {
                 </div>
                 {entry.open && (
                   <div className="relative">
-                    {/* hierarchy guide line */}
-                    <div
-                      className="absolute top-0 bottom-1 w-px bg-white/10"
-                      style={{ left: `${8 + depth * 16 + 11}px` }}
-                    />
                     {renderTree(entry.path, depth + 1)}
                     {addingIn === entry.path && <AddInput depth={depth + 1} inPath={entry.path} />}
+                    {/* hierarchy guide line — after children in DOM so it paints on top of row backgrounds */}
+                    <div
+                      className="pointer-events-none absolute top-0 bottom-0 w-px bg-white/20"
+                      style={{ left: `${8 + depth * 16 + 11}px` }}
+                    />
                   </div>
                 )}
               </div>
@@ -721,14 +724,6 @@ export default function BuilderPage() {
     <div
       className="flex h-screen flex-col overflow-hidden bg-[#0a0a0f] text-white"
       onDragOver={(e) => e.preventDefault()}
-      onDrop={(e) => {
-        e.preventDefault();
-        if (draggedPathRef.current) {
-          fsMoveEntry(draggedPathRef.current, "");
-          draggedPathRef.current = null;
-          setDragOverPath(null);
-        }
-      }}
     >
 
       {/* Toast */}
@@ -1045,13 +1040,7 @@ export default function BuilderPage() {
               <div className="flex flex-1 overflow-hidden">
                 {/* File explorer */}
                 <div
-                  className={`flex w-52 shrink-0 flex-col overflow-hidden border-r border-white/5 bg-[#0c0c14] ${dragOverPath === "__root__" ? "ring-1 ring-inset ring-violet-500/30" : ""}`}
-                  onDragOver={(e) => { e.preventDefault(); if (!draggedPathRef.current) return; setDragOverPath("__root__"); }}
-                  onDragLeave={() => setDragOverPath(null)}
-                  onDrop={(e) => {
-                    e.preventDefault(); setDragOverPath(null);
-                    if (draggedPathRef.current) { fsMoveEntry(draggedPathRef.current, ""); draggedPathRef.current = null; }
-                  }}
+                  className="flex w-52 shrink-0 flex-col overflow-hidden border-r border-white/5 bg-[#0c0c14]"
                 >
                   {/* Header */}
                   <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-3 py-2.5">
