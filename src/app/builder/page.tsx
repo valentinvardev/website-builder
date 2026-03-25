@@ -179,6 +179,7 @@ export default function BuilderPage() {
   const [addingType, setAddingType] = useState<"file" | "folder">("file");
   const [addingName, setAddingName] = useState("");
   const [dragOverPath, setDragOverPath] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const draggedPathRef = useRef<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -600,11 +601,12 @@ export default function BuilderPage() {
               <div key={entry.path}>
                 <div
                   draggable
-                  onDragStart={(e) => { e.stopPropagation(); draggedPathRef.current = entry.path; }}
+                  onDragStart={(e) => { e.stopPropagation(); draggedPathRef.current = entry.path; setIsDragging(true); }}
+                  onDragEnd={() => { draggedPathRef.current = null; setIsDragging(false); setDragOverPath(null); }}
                   onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragOverPath(entry.path); }}
                   onDragLeave={(e) => { e.stopPropagation(); setDragOverPath(null); }}
                   onDrop={(e) => {
-                    e.preventDefault(); e.stopPropagation(); setDragOverPath(null);
+                    e.preventDefault(); e.stopPropagation(); setDragOverPath(null); setIsDragging(false);
                     if (draggedPathRef.current && draggedPathRef.current !== entry.path)
                       fsMoveEntry(draggedPathRef.current, entry.path);
                     draggedPathRef.current = null;
@@ -663,7 +665,8 @@ export default function BuilderPage() {
             <div
               key={entry.path}
               draggable
-              onDragStart={(e) => { e.stopPropagation(); draggedPathRef.current = entry.path; }}
+              onDragStart={(e) => { e.stopPropagation(); draggedPathRef.current = entry.path; setIsDragging(true); }}
+              onDragEnd={() => { draggedPathRef.current = null; setIsDragging(false); setDragOverPath(null); }}
               onClick={() => setSelectedFile(entry.path)}
               className={`group flex cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 transition-all ${selectedFile === entry.path ? "bg-violet-500/20 text-white" : "text-white/50 hover:bg-white/5 hover:text-white/80"}`}
               style={{ paddingLeft: `${indent + 12}px` }}
@@ -682,7 +685,6 @@ export default function BuilderPage() {
             </div>
           );
         })}
-        {addingIn === parentPath && <AddInput depth={depth} inPath={parentPath} />}
       </>
     );
   }
@@ -699,6 +701,7 @@ export default function BuilderPage() {
           fsMoveEntry(draggedPathRef.current, "");
           draggedPathRef.current = null;
           setDragOverPath(null);
+          setIsDragging(false);
         }
       }}
     >
@@ -1082,8 +1085,26 @@ export default function BuilderPage() {
                         </button>
                       ))}
 
+                      {/* Root-level new file/folder input — always at top, never inside a folder */}
+                      {addingIn === "" && <AddInput depth={0} inPath="" />}
+
                       {/* User file system */}
                       {renderTree("", 0)}
+
+                      {/* Root drop zone — visible while dragging to provide a clear target */}
+                      {isDragging && (
+                        <div
+                          onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragOverPath("__root__"); }}
+                          onDragLeave={(e) => { e.stopPropagation(); setDragOverPath(null); }}
+                          onDrop={(e) => {
+                            e.preventDefault(); e.stopPropagation(); setDragOverPath(null); setIsDragging(false);
+                            if (draggedPathRef.current) { fsMoveEntry(draggedPathRef.current, ""); draggedPathRef.current = null; }
+                          }}
+                          className={`mt-1 rounded-md border border-dashed py-1.5 text-center text-[10px] transition-all ${dragOverPath === "__root__" ? "border-violet-500/60 bg-violet-500/10 text-violet-300" : "border-white/10 text-white/20"}`}
+                        >
+                          drop here → root
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
