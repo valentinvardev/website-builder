@@ -19,7 +19,6 @@ export default function HomePage() {
           <div className="hidden items-center gap-8 md:flex">
             <Link href="#features" className="text-sm text-white/60 transition-colors hover:text-white">Features</Link>
             <Link href="#how-it-works" className="text-sm text-white/60 transition-colors hover:text-white">How it works</Link>
-            <Link href="#pricing" className="text-sm text-white/60 transition-colors hover:text-white">Pricing</Link>
           </div>
 
           <div className="flex items-center gap-3">
@@ -28,7 +27,7 @@ export default function HomePage() {
               href="/signup"
               className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium transition-all hover:bg-violet-500 hover:shadow-lg hover:shadow-violet-500/25"
             >
-              Start building
+              Get started
             </Link>
           </div>
         </div>
@@ -54,7 +53,7 @@ export default function HomePage() {
         <div className="relative mx-auto max-w-5xl px-6 text-center">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/10 px-4 py-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
-            <span className="text-xs font-medium text-violet-300">Powered by Llama 3.3</span>
+            <span className="text-xs font-medium text-violet-300">Free to use · Powered by Llama 3.3</span>
           </div>
 
           <h1 className="mb-6 text-6xl font-bold leading-[1.08] tracking-tight md:text-7xl lg:text-8xl">
@@ -66,8 +65,8 @@ export default function HomePage() {
           </h1>
 
           <p className="mx-auto mb-10 max-w-2xl text-lg text-white/50 leading-relaxed">
-            Surcodia turns your ideas into fully functional, beautiful websites in seconds.
-            Describe what you want — our AI handles the rest.
+            Describe what you want and Surcodia generates a fully functional, editable website in seconds.
+            No templates, no drag-and-drop — just write.
           </p>
 
           <div className="flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
@@ -75,7 +74,7 @@ export default function HomePage() {
               href="/builder"
               className="group relative rounded-xl bg-violet-600 px-8 py-4 text-base font-semibold transition-all hover:bg-violet-500 hover:shadow-2xl hover:shadow-violet-500/30"
             >
-              Start building for free
+              Open the builder
               <span className="ml-2 inline-block transition-transform group-hover:translate-x-0.5">→</span>
             </Link>
             <Link
@@ -104,16 +103,16 @@ export default function HomePage() {
                 <div className="w-64 border-r border-white/5 bg-[#0d0d14] p-4">
                   <div className="mb-4 text-xs font-medium uppercase tracking-wider text-white/30">Prompt</div>
                   <div className="rounded-lg border border-violet-500/30 bg-violet-500/10 p-3 text-xs leading-relaxed text-violet-200/80">
-                    &ldquo;A modern landing page for a SaaS startup with a dark theme, hero section, and pricing cards...&rdquo;
+                    &ldquo;A minimal portfolio for a photographer with a dark theme and gallery grid...&rdquo;
                   </div>
                   <div className="mt-4 rounded-lg bg-violet-600 px-3 py-2 text-center text-xs font-medium">
                     Generate ✦
                   </div>
                   <div className="mt-6 space-y-2">
-                    {["Layout", "Colors", "Typography", "Components"].map((item) => (
-                      <div key={item} className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-2">
+                    {["index.html", "styles.css", "gallery/", "about.html"].map((item) => (
+                      <div key={item} className="flex items-center gap-2 rounded-lg bg-white/5 px-3 py-2">
+                        <span className="text-white/20">{item.endsWith("/") ? "▸" : "·"}</span>
                         <span className="text-xs text-white/50">{item}</span>
-                        <span className="text-xs text-white/20">›</span>
                       </div>
                     ))}
                   </div>
@@ -148,20 +147,6 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Social proof */}
-      <section className="border-y border-white/5 bg-white/[0.02] py-12">
-        <div className="mx-auto max-w-7xl px-6">
-          <p className="mb-8 text-center text-xs font-medium uppercase tracking-widest text-white/30">
-            Trusted by teams at
-          </p>
-          <div className="flex flex-wrap items-center justify-center gap-12 opacity-30 grayscale">
-            {["Vercel", "Linear", "Stripe", "Notion", "Figma", "Loom"].map((name) => (
-              <span key={name} className="text-lg font-semibold tracking-tight text-white">{name}</span>
-            ))}
-          </div>
-        </div>
-      </section>
-
       {/* Features */}
       <section id="features" className="py-32">
         <div className="mx-auto max-w-7xl px-6">
@@ -170,13 +155,10 @@ export default function HomePage() {
               <span className="text-xs font-medium text-white/50">Features</span>
             </div>
             <h2 className="mb-4 text-4xl font-bold tracking-tight md:text-5xl">
-              Everything you need to{" "}
-              <span className="bg-gradient-to-r from-violet-400 to-indigo-400 bg-clip-text text-transparent">
-                ship faster
-              </span>
+              Everything in one place
             </h2>
             <p className="mx-auto max-w-xl text-white/50">
-              From first prompt to live website — Surcodia handles design, code, hosting, and deployment.
+              Generate, edit, preview, and organize your website files — all in the browser, all for free.
             </p>
           </div>
 
@@ -184,33 +166,33 @@ export default function HomePage() {
             {[
               {
                 icon: "✦",
-                title: "AI-Powered Generation",
-                desc: "Describe your site in plain English. Claude AI generates pixel-perfect code and design instantly.",
+                title: "AI Generation",
+                desc: "Describe your site in plain text. Llama 3.3 generates clean HTML, CSS, and JavaScript instantly.",
               },
               {
                 icon: "⚡",
-                title: "Real-Time Preview",
-                desc: "See changes live as the AI builds. Edit, regenerate, or tweak any element with a follow-up prompt.",
+                title: "Live Preview",
+                desc: "See your site rendered in real time. Switch between desktop, tablet, and mobile views.",
               },
               {
                 icon: "◈",
-                title: "Component Library",
-                desc: "300+ pre-built sections — heroes, pricing tables, testimonials, FAQs — all AI-customizable.",
+                title: "Monaco Editor",
+                desc: "Full code editor with syntax highlighting. Tweak anything the AI generates — no limits.",
               },
               {
                 icon: "⬡",
-                title: "One-Click Deploy",
-                desc: "Publish to a custom domain or surcodia.app subdomain instantly. Zero config, zero DevOps.",
+                title: "Virtual File System",
+                desc: "Create files and folders, drag and drop to reorganize. Cross-file links (CSS, JS) work out of the box.",
               },
               {
                 icon: "◎",
-                title: "Export Clean Code",
-                desc: "Own your code. Export production-ready Next.js, HTML, or React — no lock-in, ever.",
+                title: "Saved Projects",
+                desc: "Your projects and chat history are saved automatically. Pick up where you left off anytime.",
               },
               {
                 icon: "⊞",
-                title: "Team Collaboration",
-                desc: "Invite teammates, leave comments, and work together on sites in real time.",
+                title: "Shareable Links",
+                desc: "Every project gets a public URL. Share a live preview of your site with anyone, instantly.",
               },
             ].map((f) => (
               <div
@@ -257,12 +239,12 @@ export default function HomePage() {
               {
                 step: "02",
                 title: "AI builds it instantly",
-                desc: "Claude generates your full site — layout, content, colors, and responsive design — in seconds.",
+                desc: "Llama 3.3 generates your full site — layout, content, colors, and responsive design — in seconds.",
               },
               {
                 step: "03",
-                title: "Publish & share",
-                desc: "Hit deploy. Your site goes live on a fast global CDN with a custom domain in one click.",
+                title: "Edit and share",
+                desc: "Refine with follow-up prompts or edit the code directly. Share a live preview link with one click.",
               },
             ].map((s) => (
               <div key={s.step}>
@@ -270,92 +252,6 @@ export default function HomePage() {
                 <div className="mb-3 h-px w-12 bg-gradient-to-r from-violet-500 to-transparent" />
                 <h3 className="mb-2 text-lg font-semibold">{s.title}</h3>
                 <p className="text-sm leading-relaxed text-white/50">{s.desc}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Pricing */}
-      <section id="pricing" className="py-32">
-        <div className="mx-auto max-w-7xl px-6">
-          <div className="mb-16 text-center">
-            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-1.5">
-              <span className="text-xs font-medium text-white/50">Pricing</span>
-            </div>
-            <h2 className="mb-4 text-4xl font-bold tracking-tight md:text-5xl">
-              Simple, transparent pricing
-            </h2>
-            <p className="text-white/50">Start free. Scale as you grow.</p>
-          </div>
-
-          <div className="grid gap-6 md:grid-cols-3">
-            {[
-              {
-                name: "Starter",
-                price: "$0",
-                period: "forever",
-                desc: "Perfect for personal projects and experimenting.",
-                features: ["3 websites", "AI generation (50/mo)", "surcodia.app subdomain", "Community support"],
-                cta: "Get started free",
-                highlight: false,
-              },
-              {
-                name: "Pro",
-                price: "$19",
-                period: "per month",
-                desc: "For creators and freelancers who ship regularly.",
-                features: ["Unlimited websites", "AI generation (unlimited)", "Custom domains", "Export clean code", "Priority support"],
-                cta: "Start Pro trial",
-                highlight: true,
-              },
-              {
-                name: "Team",
-                price: "$49",
-                period: "per month",
-                desc: "For agencies and teams building at scale.",
-                features: ["Everything in Pro", "5 team seats", "Collaboration tools", "Brand kits", "Dedicated support", "SLA guarantee"],
-                cta: "Talk to sales",
-                highlight: false,
-              },
-            ].map((plan) => (
-              <div
-                key={plan.name}
-                className={`relative rounded-2xl p-6 ${
-                  plan.highlight
-                    ? "border border-violet-500/50 bg-gradient-to-b from-violet-500/10 to-transparent shadow-2xl shadow-violet-500/10"
-                    : "border border-white/5 bg-white/[0.03]"
-                }`}
-              >
-                {plan.highlight && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-violet-600 px-3 py-1 text-xs font-semibold">
-                    Most popular
-                  </div>
-                )}
-                <div className="mb-1 text-sm font-medium text-white/60">{plan.name}</div>
-                <div className="mb-1 flex items-baseline gap-1">
-                  <span className="text-4xl font-bold">{plan.price}</span>
-                  <span className="text-sm text-white/40">/{plan.period}</span>
-                </div>
-                <p className="mb-6 text-sm text-white/40">{plan.desc}</p>
-                <Link
-                  href="/builder"
-                  className={`mb-6 block rounded-xl py-3 text-center text-sm font-semibold transition-all ${
-                    plan.highlight
-                      ? "bg-violet-600 hover:bg-violet-500 hover:shadow-lg hover:shadow-violet-500/25"
-                      : "border border-white/10 bg-white/5 hover:bg-white/10"
-                  }`}
-                >
-                  {plan.cta}
-                </Link>
-                <ul className="space-y-3">
-                  {plan.features.map((f) => (
-                    <li key={f} className="flex items-center gap-2 text-sm text-white/60">
-                      <span className="text-violet-400">✓</span>
-                      {f}
-                    </li>
-                  ))}
-                </ul>
               </div>
             ))}
           </div>
@@ -371,20 +267,16 @@ export default function HomePage() {
             </div>
             <div className="relative">
               <h2 className="mb-4 text-4xl font-bold tracking-tight md:text-5xl">
-                Ready to build something
-                <br />
-                <span className="bg-gradient-to-r from-violet-400 to-indigo-400 bg-clip-text text-transparent">
-                  extraordinary?
-                </span>
+                Ready to build?
               </h2>
               <p className="mb-8 text-white/50">
-                Join thousands of builders who ship faster with Surcodia.
+                Free to use. No credit card. No limits on what you can create.
               </p>
               <Link
                 href="/builder"
                 className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-8 py-4 text-base font-semibold transition-all hover:bg-violet-500 hover:shadow-2xl hover:shadow-violet-500/30"
               >
-                Start building for free <span>→</span>
+                Open the builder <span>→</span>
               </Link>
             </div>
           </div>
@@ -392,9 +284,9 @@ export default function HomePage() {
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-white/5 py-12">
+      <footer className="border-t border-white/5 py-10">
         <div className="mx-auto max-w-7xl px-6">
-          <div className="flex flex-col items-center justify-between gap-6 md:flex-row">
+          <div className="flex flex-col items-center justify-between gap-4 md:flex-row">
             <div className="flex items-center gap-2">
               <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600">
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
@@ -403,16 +295,9 @@ export default function HomePage() {
                 </svg>
               </div>
               <span className="text-sm font-semibold">Surcodia</span>
-              <span className="text-sm text-white/30">Website Builder</span>
+              <span className="text-sm text-white/30">— free AI website builder</span>
             </div>
-            <div className="flex flex-wrap items-center justify-center gap-8">
-              {["Features", "Pricing", "Docs", "Blog", "Privacy", "Terms"].map((link) => (
-                <Link key={link} href="#" className="text-xs text-white/30 transition-colors hover:text-white/60">
-                  {link}
-                </Link>
-              ))}
-            </div>
-            <p className="text-xs text-white/20">© 2026 Surcodia. All rights reserved.</p>
+            <p className="text-xs text-white/20">Built with Next.js, Tailwind, and Groq</p>
           </div>
         </div>
       </footer>
