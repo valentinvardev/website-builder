@@ -162,37 +162,47 @@ export default function BuilderPage() {
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let response = "";
+      const HTML_MARKER = "%%SURCODIA_HTML%%";
+      let raw = "";
+      let isBuildMode: boolean | null = null;
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        response += decoder.decode(value, { stream: true });
-        // Only update preview if it looks like HTML
-        if (response.trimStart().startsWith("<")) {
-          setGeneratedHtml(response);
+        raw += decoder.decode(value, { stream: true });
+
+        // Detect mode once we have enough data
+        if (isBuildMode === null && raw.length >= HTML_MARKER.length) {
+          isBuildMode = raw.includes(HTML_MARKER);
+        }
+
+        // Stream HTML into preview as it arrives
+        if (isBuildMode) {
+          const html = raw.replace(HTML_MARKER, "").trimStart();
+          if (html) setGeneratedHtml(html);
         }
       }
 
-      const isHtml = response.trimStart().startsWith("<");
+      const isHtml = isBuildMode === true;
+      const html = isHtml ? raw.replace(HTML_MARKER, "").trimStart() : "";
+      const chatText = isHtml
+        ? "Done! Your site is live in the preview. Ask me to tweak anything — layout, colors, content, new sections."
+        : raw;
 
       const assistantMsg: Message = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: isHtml
-          ? "Done! Your site is live in the preview. Ask me to tweak anything — layout, colors, content, new sections."
-          : response,
-        htmlContent: isHtml ? response : undefined,
+        content: chatText,
+        htmlContent: isHtml ? html : undefined,
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, assistantMsg]);
 
-      // Only save if it was an HTML generation
       if (isHtml) {
         const saveRes = await fetch("/api/projects", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: projectName, html: response, id: currentProjectId ?? undefined }),
+          body: JSON.stringify({ name: projectName, html, id: currentProjectId ?? undefined }),
         });
         const saved = await saveRes.json() as SavedProject;
         setCurrentProjectId(saved.id);
