@@ -107,6 +107,49 @@ function applyFileContent(html: string, fileName: string, content: string): stri
   return html;
 }
 
+// Resolve a relative href against the directory of the current HTML file
+function resolveHref(href: string, dir: string): string | null {
+  if (/^(https?:|\/\/|data:|blob:)/.test(href)) return null; // external — leave as-is
+  if (href.startsWith("/")) return href.slice(1).split("?")[0] ?? null;
+  const base = dir ? dir.split("/") : [];
+  for (const seg of href.split("/")) {
+    if (seg === "..") base.pop();
+    else if (seg && seg !== ".") base.push(seg);
+  }
+  return base.join("/") || null;
+}
+
+// Inline CSS/JS assets from the virtual file system so the iframe srcDoc can render them
+function inlineAssets(html: string, fs: FSEntry[], htmlPath: string): string {
+  if (!html) return html;
+  const dir = htmlPath.includes("/") ? htmlPath.split("/").slice(0, -1).join("/") : "";
+  const files = new Map<string, string>(
+    fs.filter((e): e is FSFile => e.type === "file").map((e) => [e.path, e.content])
+  );
+  // <link rel="stylesheet" href="..."> → <style>...</style>
+  html = html.replace(/<link\b([^>]*)>/gi, (match, attrs: string) => {
+    if (!/rel=["']stylesheet["']/i.test(attrs)) return match;
+    const m = /href=["']([^"']+)["']/i.exec(attrs);
+    if (!m?.[1]) return match;
+    const resolved = resolveHref(m[1], dir);
+    if (!resolved) return match;
+    const content = files.get(resolved);
+    if (content === undefined) return match;
+    return `<style>/* inlined: ${resolved} */\n${content}</style>`;
+  });
+  // <script src="..."></script> → <script>...</script>
+  html = html.replace(/<script\b([^>]*)>\s*<\/script>/gi, (match, attrs: string) => {
+    const m = /src=["']([^"']+)["']/i.exec(attrs);
+    if (!m?.[1]) return match;
+    const resolved = resolveHref(m[1], dir);
+    if (!resolved) return match;
+    const content = files.get(resolved);
+    if (content === undefined) return match;
+    return `<script>/* inlined: ${resolved} */\n${content}<\/script>`;
+  });
+  return html;
+}
+
 function getBaseFiles(html: string) {
   if (!html) return [];
   const files: { path: string; language: "html" | "css" | "javascript" }[] = [
@@ -197,9 +240,10 @@ export default function BuilderPage() {
   }, [fileSystem]);
 
   const previewHtml = useMemo(() => {
-    if (previewPage === "index.html") return generatedHtml;
-    const e = fileSystem.find((x) => x.type === "file" && x.path === previewPage);
-    return e?.type === "file" ? e.content : "";
+    const raw = previewPage === "index.html"
+      ? generatedHtml
+      : (fileSystem.find((x): x is FSFile => x.type === "file" && x.path === previewPage)?.content ?? "");
+    return inlineAssets(raw, fileSystem, previewPage);
   }, [previewPage, generatedHtml, fileSystem]);
 
   // ─── Effects ─────────────────────────────────────────────────────────────────
