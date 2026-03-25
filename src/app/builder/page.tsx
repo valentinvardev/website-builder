@@ -147,19 +147,45 @@ export default function BuilderPage() {
   const [selectedFile, setSelectedFile] = useState<string>("index.html");
   const [editorContent, setEditorContent] = useState<string>("");
   const [cursorInfo, setCursorInfo] = useState("Ln 1, Col 1");
+  const [extraFiles, setExtraFiles] = useState<Record<string, string>>({});
+  const [previewPage, setPreviewPage] = useState<string>("index.html");
+  const [isAddingFile, setIsAddingFile] = useState(false);
+  const [newFileName, setNewFileName] = useState("");
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
 
-  const availableFiles = useMemo(() => getAvailableFiles(generatedHtml), [generatedHtml]);
+  const availableFiles = useMemo(() => {
+    const base = getAvailableFiles(generatedHtml);
+    const extra = Object.keys(extraFiles).map((name) => {
+      const ext = name.split(".").pop() ?? "";
+      const language: VirtualFile["language"] = ext === "css" ? "css" : ext === "js" ? "javascript" : "html";
+      const icon = ext === "css" ? "css" : ext === "js" ? "js" : "html";
+      return { name, language, icon };
+    });
+    return [...base, ...extra];
+  }, [generatedHtml, extraFiles]);
+
+  const htmlPages = useMemo(
+    () => ["index.html", ...Object.keys(extraFiles).filter((f) => f.endsWith(".html"))],
+    [extraFiles],
+  );
+
+  const previewHtml = useMemo(
+    () => (previewPage === "index.html" ? generatedHtml : (extraFiles[previewPage] ?? "")),
+    [previewPage, generatedHtml, extraFiles],
+  );
 
   // Sync editor content when file or HTML changes
   useEffect(() => {
-    if (generatedHtml) {
+    if (!generatedHtml && !extraFiles[selectedFile]) return;
+    if (selectedFile in extraFiles) {
+      setEditorContent(extraFiles[selectedFile] ?? "");
+    } else {
       setEditorContent(getFileContent(generatedHtml, selectedFile));
     }
-  }, [selectedFile, generatedHtml]);
+  }, [selectedFile, generatedHtml, extraFiles]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -205,10 +231,34 @@ export default function BuilderPage() {
   useEffect(() => { void loadProjects(); }, [loadProjects]);
 
   function handleEditorChange(value: string | undefined) {
-    if (!value || !generatedHtml) return;
+    if (value === undefined) return;
     setEditorContent(value);
-    const updated = applyFileContent(generatedHtml, selectedFile, value);
-    setGeneratedHtml(updated);
+    if (selectedFile in extraFiles) {
+      setExtraFiles((prev) => ({ ...prev, [selectedFile]: value }));
+    } else if (generatedHtml) {
+      setGeneratedHtml(applyFileContent(generatedHtml, selectedFile, value));
+    }
+  }
+
+  function addNewFile() {
+    const name = newFileName.trim();
+    if (!name) return;
+    const safeName = name.includes(".") ? name : `${name}.html`;
+    if (availableFiles.some((f) => f.name === safeName)) {
+      showToast(`File "${safeName}" already exists`);
+      return;
+    }
+    const ext = safeName.split(".").pop() ?? "";
+    const defaultContent =
+      ext === "html"
+        ? `<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8">\n  <title>${safeName}</title>\n</head>\n<body>\n\n</body>\n</html>`
+        : ext === "css"
+          ? `/* ${safeName} */\n`
+          : `// ${safeName}\n`;
+    setExtraFiles((prev) => ({ ...prev, [safeName]: defaultContent }));
+    setSelectedFile(safeName);
+    setIsAddingFile(false);
+    setNewFileName("");
   }
 
   async function handleSend() {
@@ -293,13 +343,18 @@ export default function BuilderPage() {
           htmlContent: m.htmlContent,
         }));
 
+        const projectData = {
+          messages: serialized,
+          extraFiles: Object.keys(extraFiles).length > 0 ? extraFiles : undefined,
+        };
+
         const saveRes = await fetch("/api/projects", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name: projectName,
             html,
-            messages: JSON.stringify(serialized),
+            messages: JSON.stringify(projectData),
             id: currentProjectId ?? undefined,
           }),
         });
@@ -358,15 +413,26 @@ export default function BuilderPage() {
 
     if (project.messages) {
       try {
-        const msgs = JSON.parse(project.messages) as SerializedMessage[];
-        setMessages(msgs.map((m) => ({ ...m, timestamp: new Date() })));
+        const raw = JSON.parse(project.messages) as
+          | SerializedMessage[]
+          | { messages: SerializedMessage[]; extraFiles?: Record<string, string> };
+        if (Array.isArray(raw)) {
+          setMessages(raw.map((m) => ({ ...m, timestamp: new Date() })));
+          setExtraFiles({});
+        } else {
+          setMessages(raw.messages.map((m) => ({ ...m, timestamp: new Date() })));
+          setExtraFiles(raw.extraFiles ?? {});
+        }
       } catch {
         setMessages([]);
+        setExtraFiles({});
       }
     } else {
       setMessages([]);
+      setExtraFiles({});
     }
 
+    setPreviewPage("index.html");
     setShowSidebar(false);
     setSelectedProject(null);
     showToast(`Loaded "${project.name}"`);
@@ -526,6 +592,8 @@ export default function BuilderPage() {
                     setProjectName("Untitled site");
                     setCurrentProjectId(null);
                     setCurrentShareId(null);
+                    setExtraFiles({});
+                    setPreviewPage("index.html");
                     setShowSidebar(false);
                   }}
                   className="flex w-full items-center gap-2 rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-3 py-2.5 text-xs text-white/40 transition-all hover:border-violet-500/30 hover:bg-violet-500/5 hover:text-violet-300"
@@ -672,11 +740,41 @@ export default function BuilderPage() {
                   </div>
                   {deviceMode !== "desktop" && <span className="text-xs text-white/30">{DEVICE_SIZES[deviceMode]}</span>}
                 </div>
-                <div className="flex flex-1 items-start justify-center overflow-auto p-6">
-                  <div className="h-full overflow-hidden rounded-xl border border-white/10 bg-white shadow-2xl shadow-black/50 transition-all duration-300"
-                    style={{ width: DEVICE_SIZES[deviceMode], minHeight: "100%" }}>
-                    <iframe srcDoc={generatedHtml} className="h-full w-full" style={{ minHeight: "600px" }} title="Preview" sandbox="allow-scripts" />
+                <div className="flex flex-1 overflow-hidden">
+                  <div className="flex flex-1 items-start justify-center overflow-auto p-6">
+                    <div className="h-full overflow-hidden rounded-xl border border-white/10 bg-white shadow-2xl shadow-black/50 transition-all duration-300"
+                      style={{ width: DEVICE_SIZES[deviceMode], minHeight: "100%" }}>
+                      <iframe srcDoc={previewHtml} className="h-full w-full" style={{ minHeight: "600px" }} title="Preview" sandbox="allow-scripts" />
+                    </div>
                   </div>
+
+                  {/* Pages panel — shown when project has multiple HTML pages */}
+                  {htmlPages.length > 1 && (
+                    <div className="flex w-44 shrink-0 flex-col border-l border-white/5 bg-[#0c0c14]">
+                      <div className="flex items-center gap-2 border-b border-white/5 px-3 py-2.5">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/30">
+                          <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                        </svg>
+                        <span className="text-[10px] font-semibold uppercase tracking-widest text-white/30">Pages</span>
+                      </div>
+                      <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                        {htmlPages.map((page) => (
+                          <button
+                            key={page}
+                            onClick={() => setPreviewPage(page)}
+                            className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-all ${
+                              previewPage === page
+                                ? "bg-violet-500/20 text-white"
+                                : "text-white/40 hover:bg-white/5 hover:text-white/70"
+                            }`}
+                          >
+                            <span className="text-orange-400 text-[10px] font-bold shrink-0">H</span>
+                            <span className="text-xs truncate">{page}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </>
             ) : (
@@ -684,11 +782,22 @@ export default function BuilderPage() {
               <div className="flex flex-1 overflow-hidden">
                 {/* File explorer */}
                 <div className="flex w-52 shrink-0 flex-col border-r border-white/5 bg-[#0c0c14]">
-                  <div className="flex items-center gap-2 border-b border-white/5 px-3 py-2.5">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/30">
-                      <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
-                    </svg>
-                    <span className="text-[10px] font-semibold uppercase tracking-widest text-white/30">Explorer</span>
+                  <div className="flex items-center justify-between border-b border-white/5 px-3 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/30">
+                        <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+                      </svg>
+                      <span className="text-[10px] font-semibold uppercase tracking-widest text-white/30">Explorer</span>
+                    </div>
+                    <button
+                      onClick={() => { setIsAddingFile(true); setNewFileName(""); }}
+                      title="New file"
+                      className="rounded-md p-1 text-white/30 transition-all hover:bg-white/10 hover:text-white/70"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M12 5v14M5 12h14"/>
+                      </svg>
+                    </button>
                   </div>
 
                   <div className="p-2">
@@ -701,15 +810,53 @@ export default function BuilderPage() {
 
                     <div className="ml-3 mt-1 space-y-0.5 border-l border-white/5 pl-2">
                       {availableFiles.map((file) => (
-                        <button key={file.name} onClick={() => setSelectedFile(file.name)}
-                          className={`group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-all ${
-                            selectedFile === file.name ? "bg-violet-500/20 text-white" : "text-white/50 hover:bg-white/5 hover:text-white/80"
-                          }`}
-                        >
-                          <FileIcon type={file.icon} />
-                          <span className="text-xs truncate">{file.name}</span>
-                        </button>
+                        <div key={file.name} className="group flex items-center gap-1">
+                          <button onClick={() => setSelectedFile(file.name)}
+                            className={`flex flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-all ${
+                              selectedFile === file.name ? "bg-violet-500/20 text-white" : "text-white/50 hover:bg-white/5 hover:text-white/80"
+                            }`}
+                          >
+                            <FileIcon type={file.icon} />
+                            <span className="text-xs truncate">{file.name}</span>
+                          </button>
+                          {file.name in extraFiles && (
+                            <button
+                              onClick={() => {
+                                const updated = { ...extraFiles };
+                                delete updated[file.name];
+                                setExtraFiles(updated);
+                                if (selectedFile === file.name) setSelectedFile("index.html");
+                              }}
+                              className="opacity-0 group-hover:opacity-100 rounded p-0.5 text-white/20 transition-all hover:text-red-400"
+                              title="Delete file"
+                            >
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M18 6L6 18M6 6l12 12"/>
+                              </svg>
+                            </button>
+                          )}
+                        </div>
                       ))}
+
+                      {isAddingFile && (
+                        <div className="mt-1 flex items-center gap-1 rounded-md bg-white/5 px-2 py-1">
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-white/30">
+                            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                          </svg>
+                          <input
+                            autoFocus
+                            value={newFileName}
+                            onChange={(e) => setNewFileName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") addNewFile();
+                              if (e.key === "Escape") { setIsAddingFile(false); setNewFileName(""); }
+                            }}
+                            onBlur={() => { if (!newFileName.trim()) { setIsAddingFile(false); setNewFileName(""); } }}
+                            placeholder="filename.html"
+                            className="w-full bg-transparent text-xs text-white/70 outline-none placeholder-white/20"
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
