@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { useSession, signOut } from "next-auth/react";
 
 type Message = {
   id: string;
@@ -55,6 +56,7 @@ const DEVICE_SIZES: Record<DeviceMode, string> = {
 };
 
 export default function BuilderPage() {
+  const { data: session } = useSession();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -382,6 +384,29 @@ export default function BuilderPage() {
           <button className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold transition-all hover:bg-violet-500 hover:shadow-lg hover:shadow-violet-500/25">
             Deploy →
           </button>
+
+          <div className="h-4 w-px bg-white/10" />
+
+          {/* User menu */}
+          <div className="flex items-center gap-2">
+            <div className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 text-xs font-semibold text-white">
+              {session?.user?.image ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={session.user.image} alt="" className="h-full w-full object-cover" />
+              ) : (
+                session?.user?.name?.[0]?.toUpperCase() ?? "?"
+              )}
+            </div>
+            <button
+              onClick={() => void signOut({ callbackUrl: "/" })}
+              className="text-xs text-white/30 transition-colors hover:text-white/70"
+              title="Sign out"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
+              </svg>
+            </button>
+          </div>
         </div>
       </header>
 
