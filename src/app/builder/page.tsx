@@ -21,18 +21,17 @@ type Message = SerializedMessage & { timestamp: Date };
 type DeviceMode = "desktop" | "tablet" | "mobile";
 type PanelMode = "preview" | "editor";
 
+type FSFile = { type: "file"; path: string; content: string };
+type FSFolder = { type: "folder"; path: string; open: boolean };
+type FSEntry = FSFile | FSFolder;
+
 type SavedProject = {
   id: string;
   name: string;
   shareId: string;
   createdAt: string;
   updatedAt: string;
-};
-
-type VirtualFile = {
-  name: string;
-  language: "html" | "css" | "javascript";
-  icon: string;
+  files?: string;
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -67,13 +66,7 @@ const DEVICE_SIZES: Record<DeviceMode, string> = {
   mobile: "390px",
 };
 
-const ALL_FILES: VirtualFile[] = [
-  { name: "index.html", language: "html", icon: "html" },
-  { name: "styles.css", language: "css", icon: "css" },
-  { name: "app.js", language: "javascript", icon: "js" },
-];
-
-// ─── File parsing helpers ─────────────────────────────────────────────────────
+// ─── File helpers ─────────────────────────────────────────────────────────────
 
 function getFileContent(html: string, fileName: string): string {
   if (fileName === "index.html") return html;
@@ -96,16 +89,15 @@ function getFileContent(html: string, fileName: string): string {
 function applyFileContent(html: string, fileName: string, content: string): string {
   if (fileName === "index.html") return content;
   if (fileName === "styles.css") {
-    if (/<style[^>]*>/i.test(html)) {
+    if (/<style[^>]*>/i.test(html))
       return html.replace(/<style[^>]*>[\s\S]*?<\/style>/i, `<style>\n${content}\n</style>`);
-    }
     return html.replace("</head>", `<style>\n${content}\n</style>\n</head>`);
   }
   if (fileName === "app.js") {
-    const hasInlineScript = /<script(?![^>]*\bsrc\b)[^>]*>[\s\S]*?<\/script>/i.test(html);
-    if (hasInlineScript) {
+    const hasInline = /<script(?![^>]*\bsrc\b)[^>]*>[\s\S]*?<\/script>/i.test(html);
+    if (hasInline) {
       let first = true;
-      return html.replace(/<script(?![^>]*\bsrc\b)[^>]*>[\s\S]*?<\/script>/gi, (match) => {
+      return html.replace(/<script(?![^>]*\bsrc\b)[^>]*>[\s\S]*?<\/script>/gi, (m) => {
         if (first) { first = false; return `<script>\n${content}\n</script>`; }
         return "";
       });
@@ -115,12 +107,42 @@ function applyFileContent(html: string, fileName: string, content: string): stri
   return html;
 }
 
-function getAvailableFiles(html: string): VirtualFile[] {
-  return ALL_FILES.filter((f) => {
-    if (f.name === "index.html") return true;
-    return getFileContent(html, f.name).length > 0;
-  });
+function getBaseFiles(html: string) {
+  if (!html) return [];
+  const files: { path: string; language: "html" | "css" | "javascript" }[] = [
+    { path: "index.html", language: "html" },
+  ];
+  if (getFileContent(html, "styles.css").length > 0)
+    files.push({ path: "styles.css", language: "css" });
+  if (getFileContent(html, "app.js").length > 0)
+    files.push({ path: "app.js", language: "javascript" });
+  return files;
 }
+
+function getPathLanguage(path: string): "html" | "css" | "javascript" {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "css") return "css";
+  if (ext === "js" || ext === "ts") return "javascript";
+  return "html";
+}
+
+function getPathIcon(path: string): "html" | "css" | "js" {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "css") return "css";
+  if (ext === "js" || ext === "ts") return "js";
+  return "html";
+}
+
+function getDefaultContent(path: string): string {
+  const name = path.split("/").pop() ?? path;
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "html")
+    return `<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8">\n  <title>${name}</title>\n</head>\n<body>\n\n</body>\n</html>`;
+  if (ext === "css") return `/* ${name} */\n`;
+  return `// ${name}\n`;
+}
+
+const BASE_PATHS = ["index.html", "styles.css", "app.js"];
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -144,48 +166,52 @@ export default function BuilderPage() {
   const [toast, setToast] = useState<string | null>(null);
   const [phraseIndex, setPhraseIndex] = useState(0);
   const [phraseVisible, setPhraseVisible] = useState(true);
+
+  // Editor
   const [selectedFile, setSelectedFile] = useState<string>("index.html");
   const [editorContent, setEditorContent] = useState<string>("");
   const [cursorInfo, setCursorInfo] = useState("Ln 1, Col 1");
-  const [extraFiles, setExtraFiles] = useState<Record<string, string>>({});
+
+  // File system
+  const [fileSystem, setFileSystem] = useState<FSEntry[]>([]);
   const [previewPage, setPreviewPage] = useState<string>("index.html");
-  const [isAddingFile, setIsAddingFile] = useState(false);
-  const [newFileName, setNewFileName] = useState("");
+  const [addingIn, setAddingIn] = useState<string | null>(null);
+  const [addingType, setAddingType] = useState<"file" | "folder">("file");
+  const [addingName, setAddingName] = useState("");
+  const [dragOverPath, setDragOverPath] = useState<string | null>(null);
+  const draggedPathRef = useRef<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
 
-  const availableFiles = useMemo(() => {
-    const base = getAvailableFiles(generatedHtml);
-    const extra = Object.keys(extraFiles).map((name) => {
-      const ext = name.split(".").pop() ?? "";
-      const language: VirtualFile["language"] = ext === "css" ? "css" : ext === "js" ? "javascript" : "html";
-      const icon = ext === "css" ? "css" : ext === "js" ? "js" : "html";
-      return { name, language, icon };
-    });
-    return [...base, ...extra];
-  }, [generatedHtml, extraFiles]);
+  // ─── Derived ─────────────────────────────────────────────────────────────────
 
-  const htmlPages = useMemo(
-    () => ["index.html", ...Object.keys(extraFiles).filter((f) => f.endsWith(".html"))],
-    [extraFiles],
-  );
+  const baseFiles = useMemo(() => getBaseFiles(generatedHtml), [generatedHtml]);
 
-  const previewHtml = useMemo(
-    () => (previewPage === "index.html" ? generatedHtml : (extraFiles[previewPage] ?? "")),
-    [previewPage, generatedHtml, extraFiles],
-  );
+  const htmlPages = useMemo(() => {
+    const pages = ["index.html"];
+    for (const e of fileSystem)
+      if (e.type === "file" && e.path.endsWith(".html")) pages.push(e.path);
+    return pages;
+  }, [fileSystem]);
 
-  // Sync editor content when file or HTML changes
+  const previewHtml = useMemo(() => {
+    if (previewPage === "index.html") return generatedHtml;
+    const e = fileSystem.find((x) => x.type === "file" && x.path === previewPage);
+    return e?.type === "file" ? e.content : "";
+  }, [previewPage, generatedHtml, fileSystem]);
+
+  // ─── Effects ─────────────────────────────────────────────────────────────────
+
   useEffect(() => {
-    if (!generatedHtml && !extraFiles[selectedFile]) return;
-    if (selectedFile in extraFiles) {
-      setEditorContent(extraFiles[selectedFile] ?? "");
-    } else {
+    if (BASE_PATHS.includes(selectedFile)) {
       setEditorContent(getFileContent(generatedHtml, selectedFile));
+    } else {
+      const e = fileSystem.find((x) => x.type === "file" && x.path === selectedFile);
+      setEditorContent(e?.type === "file" ? e.content : "");
     }
-  }, [selectedFile, generatedHtml, extraFiles]);
+  }, [selectedFile, generatedHtml, fileSystem]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -230,36 +256,100 @@ export default function BuilderPage() {
 
   useEffect(() => { void loadProjects(); }, [loadProjects]);
 
+  // ─── File system ops ──────────────────────────────────────────────────────────
+
+  function pathExists(path: string, fs?: FSEntry[]): boolean {
+    const entries = fs ?? fileSystem;
+    return BASE_PATHS.includes(path) || entries.some((e) => e.path === path);
+  }
+
+  function fsAddEntry(parentPath: string, name: string, type: "file" | "folder") {
+    const safeName = type === "file" && !name.includes(".") ? `${name}.html` : name;
+    const fullPath = parentPath ? `${parentPath}/${safeName}` : safeName;
+    if (pathExists(fullPath)) { showToast(`"${safeName}" already exists`); return; }
+    const entry: FSEntry =
+      type === "folder"
+        ? { type: "folder", path: fullPath, open: true }
+        : { type: "file", path: fullPath, content: getDefaultContent(fullPath) };
+    const newFs = [...fileSystem, entry];
+    setFileSystem(newFs);
+    if (type === "file") setSelectedFile(fullPath);
+    void saveProjectFiles(newFs);
+  }
+
+  function fsDeleteEntry(path: string) {
+    const newFs = fileSystem.filter((e) => e.path !== path && !e.path.startsWith(path + "/"));
+    setFileSystem(newFs);
+    if (selectedFile === path || selectedFile.startsWith(path + "/")) setSelectedFile("index.html");
+    void saveProjectFiles(newFs);
+  }
+
+  function fsToggleFolder(path: string) {
+    setFileSystem((prev) =>
+      prev.map((e) => (e.type === "folder" && e.path === path ? { ...e, open: !e.open } : e))
+    );
+  }
+
+  function fsMoveEntry(fromPath: string, toFolder: string) {
+    const name = fromPath.split("/").pop()!;
+    const newPath = toFolder ? `${toFolder}/${name}` : name;
+    if (newPath === fromPath) return;
+    if (pathExists(newPath)) { showToast(`"${name}" already exists there`); return; }
+    const newFs = fileSystem.map((e) => {
+      if (e.path === fromPath) return { ...e, path: newPath };
+      if (e.path.startsWith(fromPath + "/"))
+        return { ...e, path: newPath + e.path.slice(fromPath.length) };
+      return e;
+    });
+    setFileSystem(newFs);
+    if (selectedFile === fromPath) setSelectedFile(newPath);
+    void saveProjectFiles(newFs);
+  }
+
+  async function saveProjectFiles(fs: FSEntry[]) {
+    if (!currentProjectId || !generatedHtml) return;
+    await fetch("/api/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: currentProjectId,
+        name: projectName,
+        html: generatedHtml,
+        files: JSON.stringify(fs),
+      }),
+    });
+  }
+
+  async function saveCurrentProject() {
+    if (!currentProjectId || !generatedHtml) { showToast("Generate a site first!"); return; }
+    await fetch("/api/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: currentProjectId,
+        name: projectName,
+        html: generatedHtml,
+        files: JSON.stringify(fileSystem),
+      }),
+    });
+    showToast("Saved!");
+  }
+
+  // ─── Editor ───────────────────────────────────────────────────────────────────
+
   function handleEditorChange(value: string | undefined) {
     if (value === undefined) return;
     setEditorContent(value);
-    if (selectedFile in extraFiles) {
-      setExtraFiles((prev) => ({ ...prev, [selectedFile]: value }));
-    } else if (generatedHtml) {
+    if (BASE_PATHS.includes(selectedFile)) {
       setGeneratedHtml(applyFileContent(generatedHtml, selectedFile, value));
+    } else {
+      setFileSystem((prev) =>
+        prev.map((e) => (e.type === "file" && e.path === selectedFile ? { ...e, content: value } : e))
+      );
     }
   }
 
-  function addNewFile() {
-    const name = newFileName.trim();
-    if (!name) return;
-    const safeName = name.includes(".") ? name : `${name}.html`;
-    if (availableFiles.some((f) => f.name === safeName)) {
-      showToast(`File "${safeName}" already exists`);
-      return;
-    }
-    const ext = safeName.split(".").pop() ?? "";
-    const defaultContent =
-      ext === "html"
-        ? `<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8">\n  <title>${safeName}</title>\n</head>\n<body>\n\n</body>\n</html>`
-        : ext === "css"
-          ? `/* ${safeName} */\n`
-          : `// ${safeName}\n`;
-    setExtraFiles((prev) => ({ ...prev, [safeName]: defaultContent }));
-    setSelectedFile(safeName);
-    setIsAddingFile(false);
-    setNewFileName("");
-  }
+  // ─── AI generation ───────────────────────────────────────────────────────────
 
   async function handleSend() {
     const trimmed = input.trim();
@@ -285,16 +375,12 @@ export default function BuilderPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: nextMessages.map((m) => ({
-            role: m.role,
-            content: m.htmlContent ?? m.content,
-          })),
+          messages: nextMessages.map((m) => ({ role: m.role, content: m.htmlContent ?? m.content })),
         }),
       });
 
       if (!res.ok || !res.body) {
-        const errBody = await res.text();
-        throw new Error(`Generation failed (${res.status}): ${errBody}`);
+        throw new Error(`Generation failed (${res.status}): ${await res.text()}`);
       }
 
       const reader = res.body.getReader();
@@ -307,11 +393,8 @@ export default function BuilderPage() {
         const { done, value } = await reader.read();
         if (done) break;
         raw += decoder.decode(value, { stream: true });
-
-        if (isBuildMode === null && raw.length >= HTML_MARKER.length) {
+        if (isBuildMode === null && raw.length >= HTML_MARKER.length)
           isBuildMode = raw.includes(HTML_MARKER);
-        }
-
         if (isBuildMode) {
           const html = raw.replace(HTML_MARKER, "").trimStart();
           if (html) setGeneratedHtml(html);
@@ -337,16 +420,8 @@ export default function BuilderPage() {
 
       if (isHtml) {
         const serialized: SerializedMessage[] = finalMessages.map((m) => ({
-          id: m.id,
-          role: m.role,
-          content: m.content,
-          htmlContent: m.htmlContent,
+          id: m.id, role: m.role, content: m.content, htmlContent: m.htmlContent,
         }));
-
-        const projectData = {
-          messages: serialized,
-          extraFiles: Object.keys(extraFiles).length > 0 ? extraFiles : undefined,
-        };
 
         const saveRes = await fetch("/api/projects", {
           method: "POST",
@@ -354,7 +429,8 @@ export default function BuilderPage() {
           body: JSON.stringify({
             name: projectName,
             html,
-            messages: JSON.stringify(projectData),
+            messages: JSON.stringify({ messages: serialized }),
+            files: JSON.stringify(fileSystem),
             id: currentProjectId ?? undefined,
           }),
         });
@@ -371,10 +447,7 @@ export default function BuilderPage() {
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void handleSend();
-    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void handleSend(); }
   }
 
   function handleStarterPrompt(prompt: string) {
@@ -385,14 +458,13 @@ export default function BuilderPage() {
   function copyShareLink(shareId?: string) {
     const id = shareId ?? currentShareId;
     if (!id) return;
-    const url = `${window.location.origin}/api/share/${id}`;
-    void navigator.clipboard.writeText(url);
+    void navigator.clipboard.writeText(`${window.location.origin}/api/share/${id}`);
     showToast("Share link copied to clipboard!");
   }
 
   async function openProjectDirect(project: SavedProject) {
     const res = await fetch(`/api/projects/${project.id}`);
-    const full = await res.json() as SavedProject & { html: string; messages?: string };
+    const full = await res.json() as SavedProject & { html: string; messages?: string; files?: string };
     loadProjectIntoBuilder(full);
   }
 
@@ -403,7 +475,7 @@ export default function BuilderPage() {
     setModalView("preview");
   }
 
-  function loadProjectIntoBuilder(project: SavedProject & { html?: string; messages?: string }) {
+  function loadProjectIntoBuilder(project: SavedProject & { html?: string; messages?: string; files?: string }) {
     if (!project.html) return;
     setGeneratedHtml(project.html);
     setProjectName(project.name);
@@ -411,6 +483,7 @@ export default function BuilderPage() {
     setCurrentShareId(project.shareId);
     setSelectedFile("index.html");
 
+    // Messages (backwards-compat)
     if (project.messages) {
       try {
         const raw = JSON.parse(project.messages) as
@@ -418,18 +491,25 @@ export default function BuilderPage() {
           | { messages: SerializedMessage[]; extraFiles?: Record<string, string> };
         if (Array.isArray(raw)) {
           setMessages(raw.map((m) => ({ ...m, timestamp: new Date() })));
-          setExtraFiles({});
         } else {
           setMessages(raw.messages.map((m) => ({ ...m, timestamp: new Date() })));
-          setExtraFiles(raw.extraFiles ?? {});
         }
-      } catch {
-        setMessages([]);
-        setExtraFiles({});
-      }
+      } catch { setMessages([]); }
+    } else { setMessages([]); }
+
+    // File system — prefer dedicated `files` field, fall back to legacy extraFiles in messages
+    if (project.files) {
+      try { setFileSystem(JSON.parse(project.files) as FSEntry[]); } catch { setFileSystem([]); }
     } else {
-      setMessages([]);
-      setExtraFiles({});
+      // Migrate legacy extraFiles
+      try {
+        const raw = project.messages ? JSON.parse(project.messages) as { extraFiles?: Record<string, string> } : null;
+        if (raw && !Array.isArray(raw) && raw.extraFiles) {
+          setFileSystem(
+            Object.entries(raw.extraFiles).map(([path, content]) => ({ type: "file", path, content }))
+          );
+        } else { setFileSystem([]); }
+      } catch { setFileSystem([]); }
     }
 
     setPreviewPage("index.html");
@@ -445,33 +525,193 @@ export default function BuilderPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id }),
     });
-    if (currentProjectId === id) {
-      setCurrentProjectId(null);
-      setCurrentShareId(null);
-    }
+    if (currentProjectId === id) { setCurrentProjectId(null); setCurrentShareId(null); }
     void loadProjects();
     showToast("Project deleted");
   }
 
-  function FileIcon({ type }: { type: string }) {
-    if (type === "html") return <span className="text-orange-400 text-xs font-bold">H</span>;
-    if (type === "css") return <span className="text-blue-400 text-xs font-bold">C</span>;
-    if (type === "js") return <span className="text-yellow-400 text-xs font-bold">J</span>;
-    return <span className="text-white/40 text-xs">F</span>;
+  // ─── Sub-components ───────────────────────────────────────────────────────────
+
+  function FileIcon({ path }: { path: string }) {
+    const icon = getPathIcon(path);
+    if (icon === "html") return <span className="shrink-0 text-[10px] font-bold text-orange-400">H</span>;
+    if (icon === "css") return <span className="shrink-0 text-[10px] font-bold text-blue-400">C</span>;
+    return <span className="shrink-0 text-[10px] font-bold text-yellow-400">J</span>;
   }
 
+  function AddInput({ depth, inPath }: { depth: number; inPath: string }) {
+    return (
+      <div
+        className="mt-0.5 flex items-center gap-1.5 rounded-md bg-white/5 px-2 py-1 ring-1 ring-violet-500/30"
+        style={{ marginLeft: `${8 + depth * 16}px` }}
+      >
+        {addingType === "folder" ? (
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className="shrink-0 text-yellow-400/70">
+            <path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/>
+          </svg>
+        ) : (
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-white/30">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+          </svg>
+        )}
+        <input
+          autoFocus
+          value={addingName}
+          onChange={(e) => setAddingName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              const n = addingName.trim();
+              if (n) fsAddEntry(inPath, n, addingType);
+              setAddingIn(null);
+              setAddingName("");
+            }
+            if (e.key === "Escape") { setAddingIn(null); setAddingName(""); }
+          }}
+          onBlur={() => { if (!addingName.trim()) { setAddingIn(null); setAddingName(""); } }}
+          placeholder={addingType === "folder" ? "folder-name" : "filename.html"}
+          className="w-full bg-transparent text-xs text-white/70 outline-none placeholder-white/20"
+        />
+      </div>
+    );
+  }
+
+  function renderTree(parentPath: string, depth: number): React.ReactNode {
+    const prefix = parentPath ? parentPath + "/" : "";
+    const children = fileSystem
+      .filter((e) => {
+        if (!e.path.startsWith(prefix)) return false;
+        const rest = e.path.slice(prefix.length);
+        return rest.length > 0 && !rest.includes("/");
+      })
+      .sort((a, b) => {
+        if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
+        return a.path.localeCompare(b.path);
+      });
+
+    return (
+      <>
+        {children.map((entry) => {
+          const name = entry.path.split("/").pop()!;
+          const indent = 8 + depth * 16;
+
+          if (entry.type === "folder") {
+            return (
+              <div key={entry.path}>
+                <div
+                  draggable
+                  onDragStart={(e) => { e.stopPropagation(); draggedPathRef.current = entry.path; }}
+                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragOverPath(entry.path); }}
+                  onDragLeave={(e) => { e.stopPropagation(); setDragOverPath(null); }}
+                  onDrop={(e) => {
+                    e.preventDefault(); e.stopPropagation(); setDragOverPath(null);
+                    if (draggedPathRef.current && draggedPathRef.current !== entry.path)
+                      fsMoveEntry(draggedPathRef.current, entry.path);
+                    draggedPathRef.current = null;
+                  }}
+                  onClick={() => fsToggleFolder(entry.path)}
+                  className={`group flex cursor-pointer items-center gap-1.5 rounded-md py-1 pr-2 text-white/50 transition-all hover:bg-white/5 hover:text-white/80 ${dragOverPath === entry.path ? "bg-violet-500/20 text-white ring-1 ring-violet-500/40" : ""}`}
+                  style={{ paddingLeft: `${indent}px` }}
+                >
+                  <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" className={`shrink-0 transition-transform duration-150 ${entry.open ? "rotate-90" : ""}`}>
+                    <path d="M2 1l4 3-4 3V1z"/>
+                  </svg>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="shrink-0 text-yellow-400/70">
+                    <path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/>
+                  </svg>
+                  <span className="flex-1 truncate text-xs">{name}</span>
+                  <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setAddingIn(entry.path); setAddingType("file"); setAddingName(""); }}
+                      title="New file" className="rounded p-0.5 hover:bg-white/10 hover:text-white"
+                    >
+                      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                        <line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/>
+                      </svg>
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setAddingIn(entry.path); setAddingType("folder"); setAddingName(""); }}
+                      title="New folder" className="rounded p-0.5 hover:bg-white/10 hover:text-white"
+                    >
+                      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+                        <line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/>
+                      </svg>
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); fsDeleteEntry(entry.path); }}
+                      title="Delete" className="rounded p-0.5 hover:bg-red-500/20 hover:text-red-400"
+                    >
+                      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M3 6h18M19 6l-1 14H6L5 6"/>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                {entry.open && (
+                  <>
+                    {renderTree(entry.path, depth + 1)}
+                    {addingIn === entry.path && <AddInput depth={depth + 1} inPath={entry.path} />}
+                  </>
+                )}
+              </div>
+            );
+          }
+
+          return (
+            <div
+              key={entry.path}
+              draggable
+              onDragStart={(e) => { e.stopPropagation(); draggedPathRef.current = entry.path; }}
+              onClick={() => setSelectedFile(entry.path)}
+              className={`group flex cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 transition-all ${selectedFile === entry.path ? "bg-violet-500/20 text-white" : "text-white/50 hover:bg-white/5 hover:text-white/80"}`}
+              style={{ paddingLeft: `${indent + 12}px` }}
+            >
+              <FileIcon path={entry.path} />
+              <span className="flex-1 truncate text-xs">{name}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); fsDeleteEntry(entry.path); }}
+                className="rounded p-0.5 text-white/20 opacity-0 transition-all group-hover:opacity-100 hover:text-red-400"
+                title="Delete"
+              >
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 6L6 18M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+          );
+        })}
+        {addingIn === parentPath && <AddInput depth={depth} inPath={parentPath} />}
+      </>
+    );
+  }
+
+  // ─── Render ───────────────────────────────────────────────────────────────────
+
   return (
-    <div className="flex h-screen flex-col bg-[#0a0a0f] text-white overflow-hidden">
+    <div
+      className="flex h-screen flex-col overflow-hidden bg-[#0a0a0f] text-white"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault();
+        if (draggedPathRef.current) {
+          fsMoveEntry(draggedPathRef.current, "");
+          draggedPathRef.current = null;
+          setDragOverPath(null);
+        }
+      }}
+    >
 
       {/* Toast */}
       {toast && (
-        <div className="animate-slide-up fixed bottom-6 left-1/2 z-[100] -translate-x-1/2 rounded-xl border border-white/10 bg-white/10 px-5 py-3 text-sm font-medium backdrop-blur-xl shadow-2xl">
+        <div className="animate-slide-up fixed bottom-6 left-1/2 z-[100] -translate-x-1/2 rounded-xl border border-white/10 bg-white/10 px-5 py-3 text-sm font-medium shadow-2xl backdrop-blur-xl">
           {toast}
         </div>
       )}
 
       {/* Top bar */}
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-white/5 bg-[#0a0a0f] px-4 z-40">
+      <header className="z-40 flex h-14 shrink-0 items-center justify-between border-b border-white/5 bg-[#0a0a0f] px-4">
         <div className="flex items-center gap-3">
           <Link href="/" className="flex items-center gap-2 text-white/40 transition-colors hover:text-white">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -495,12 +735,11 @@ export default function BuilderPage() {
                 className="rounded bg-white/10 px-2 py-0.5 text-sm font-medium outline-none ring-1 ring-violet-500/50"
               />
             ) : (
-              <button onClick={() => setEditingName(true)} className="text-sm font-medium text-white/80 hover:text-white transition-colors">
+              <button onClick={() => setEditingName(true)} className="text-sm font-medium text-white/80 transition-colors hover:text-white">
                 {projectName}
               </button>
             )}
           </div>
-
           <button
             onClick={() => setShowSidebar((s) => !s)}
             className={`ml-2 flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all ${
@@ -515,8 +754,8 @@ export default function BuilderPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Device toggles — animated fade when switching preview/editor */}
-          <div className={`overflow-hidden transition-all duration-200 ${panelMode === "preview" ? "max-w-[160px] opacity-100" : "max-w-0 opacity-0 pointer-events-none"}`}>
+          {/* Device toggles — fade on preview/editor switch */}
+          <div className={`overflow-hidden transition-all duration-200 ${panelMode === "preview" ? "max-w-[160px] opacity-100" : "pointer-events-none max-w-0 opacity-0"}`}>
             <div className="flex items-center rounded-lg border border-white/5 bg-white/5 p-1">
               {(["desktop", "tablet", "mobile"] as DeviceMode[]).map((mode) => (
                 <button key={mode} onClick={() => setDeviceMode(mode)} title={mode}
@@ -541,7 +780,7 @@ export default function BuilderPage() {
 
           <div className="h-4 w-px bg-white/10" />
 
-          {/* Deploy = Share link */}
+          {/* Deploy */}
           <button
             onClick={() => currentShareId ? copyShareLink() : showToast("Generate a site first!")}
             className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold transition-all hover:bg-violet-500 hover:shadow-lg hover:shadow-violet-500/25"
@@ -573,7 +812,7 @@ export default function BuilderPage() {
       </header>
 
       {/* Main */}
-      <div className="flex flex-1 overflow-hidden relative">
+      <div className="relative flex flex-1 overflow-hidden">
 
         {/* Projects sidebar */}
         {showSidebar && (
@@ -587,13 +826,9 @@ export default function BuilderPage() {
               <div className="px-3 pt-3 pb-2">
                 <button
                   onClick={() => {
-                    setMessages([]);
-                    setGeneratedHtml("");
-                    setProjectName("Untitled site");
-                    setCurrentProjectId(null);
-                    setCurrentShareId(null);
-                    setExtraFiles({});
-                    setPreviewPage("index.html");
+                    setMessages([]); setGeneratedHtml(""); setProjectName("Untitled site");
+                    setCurrentProjectId(null); setCurrentShareId(null);
+                    setFileSystem([]); setPreviewPage("index.html");
                     setShowSidebar(false);
                   }}
                   className="flex w-full items-center gap-2 rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-3 py-2.5 text-xs text-white/40 transition-all hover:border-violet-500/30 hover:bg-violet-500/5 hover:text-violet-300"
@@ -604,7 +839,7 @@ export default function BuilderPage() {
                   New project
                 </button>
               </div>
-              <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-2">
+              <div className="flex-1 overflow-y-auto space-y-2 px-3 pb-3">
                 {savedProjects.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-16 text-center">
                     <div className="mb-3 text-3xl opacity-30">◎</div>
@@ -624,7 +859,7 @@ export default function BuilderPage() {
                           </p>
                         </div>
                         <button onClick={(e) => void deleteProject(p.id, e)}
-                          className="opacity-0 group-hover:opacity-100 rounded-md p-1 text-white/30 transition-all hover:bg-red-500/20 hover:text-red-400">
+                          className="rounded-md p-1 text-white/30 opacity-0 transition-all group-hover:opacity-100 hover:bg-red-500/20 hover:text-red-400">
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <path d="M3 6h18M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/>
                           </svg>
@@ -640,9 +875,9 @@ export default function BuilderPage() {
 
         {/* Chat panel */}
         <div className="flex w-[380px] shrink-0 flex-col border-r border-white/5">
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <div className="flex-1 space-y-3 overflow-y-auto p-4">
             {messages.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center text-center animate-fade-in">
+              <div className="animate-fade-in flex h-full flex-col items-center justify-center text-center">
                 <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-600 shadow-lg shadow-violet-500/25">
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
                     <path d="M12 3C7 3 3 6.6 3 11c0 2.4 1.1 4.5 2.9 6L5 21l4.4-1.5C10.5 19.8 11.2 20 12 20c5 0 9-3.6 9-9s-4-8-9-8Z" fill="white" fillOpacity="0.9"/>
@@ -662,7 +897,7 @@ export default function BuilderPage() {
             ) : (
               <>
                 {messages.map((msg) => (
-                  <div key={msg.id} className={`flex gap-3 animate-slide-up ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                  <div key={msg.id} className={`animate-slide-up flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                     {msg.role === "assistant" && (
                       <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
@@ -677,18 +912,17 @@ export default function BuilderPage() {
                     </div>
                   </div>
                 ))}
-
                 {isGenerating && (
-                  <div className="flex gap-3 animate-slide-up">
+                  <div className="animate-slide-up flex gap-3">
                     <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600">
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
                         <path d="M12 3C7 3 3 6.6 3 11c0 2.4 1.1 4.5 2.9 6L5 21l4.4-1.5C10.5 19.8 11.2 20 12 20c5 0 9-3.6 9-9s-4-8-9-8Z" fill="white" fillOpacity="0.9"/>
                       </svg>
                     </div>
-                    <div className="rounded-2xl rounded-bl-sm bg-white/5 px-4 py-3 max-w-[80%]">
-                      <div className="flex items-center gap-1.5 mb-2">
+                    <div className="max-w-[80%] rounded-2xl rounded-bl-sm bg-white/5 px-4 py-3">
+                      <div className="mb-2 flex items-center gap-1.5">
                         {[0, 1, 2].map((i) => (
-                          <span key={i} className="h-1.5 w-1.5 rounded-full bg-violet-400 animate-pulse-dot" style={{ animationDelay: `${i * 0.2}s` }} />
+                          <span key={i} className="animate-pulse-dot h-1.5 w-1.5 rounded-full bg-violet-400" style={{ animationDelay: `${i * 0.2}s` }} />
                         ))}
                       </div>
                       <div className={`text-xs text-white/50 transition-opacity duration-400 ${phraseVisible ? "opacity-100" : "opacity-0"}`}>
@@ -731,7 +965,7 @@ export default function BuilderPage() {
         <div className="flex flex-1 flex-col overflow-hidden bg-[#0d0d14]">
           {generatedHtml ? (
             panelMode === "preview" ? (
-              /* Preview */
+              /* ── Preview ── */
               <>
                 <div className="flex h-10 shrink-0 items-center justify-between border-b border-white/5 px-4">
                   <div className="flex items-center gap-2 text-xs text-white/30">
@@ -742,34 +976,35 @@ export default function BuilderPage() {
                 </div>
                 <div className="flex flex-1 overflow-hidden">
                   <div className="flex flex-1 items-start justify-center overflow-auto p-6">
-                    <div className="h-full overflow-hidden rounded-xl border border-white/10 bg-white shadow-2xl shadow-black/50 transition-all duration-300"
-                      style={{ width: DEVICE_SIZES[deviceMode], minHeight: "100%" }}>
+                    <div
+                      className="h-full overflow-hidden rounded-xl border border-white/10 bg-white shadow-2xl shadow-black/50 transition-all duration-300"
+                      style={{ width: DEVICE_SIZES[deviceMode], minHeight: "100%" }}
+                    >
                       <iframe srcDoc={previewHtml} className="h-full w-full" style={{ minHeight: "600px" }} title="Preview" sandbox="allow-scripts" />
                     </div>
                   </div>
 
-                  {/* Pages panel — shown when project has multiple HTML pages */}
+                  {/* Pages panel — only when multiple HTML pages */}
                   {htmlPages.length > 1 && (
                     <div className="flex w-44 shrink-0 flex-col border-l border-white/5 bg-[#0c0c14]">
                       <div className="flex items-center gap-2 border-b border-white/5 px-3 py-2.5">
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/30">
-                          <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                          <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                          <polyline points="14 2 14 8 20 8"/>
                         </svg>
                         <span className="text-[10px] font-semibold uppercase tracking-widest text-white/30">Pages</span>
                       </div>
-                      <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                      <div className="flex-1 space-y-1 overflow-y-auto p-2">
                         {htmlPages.map((page) => (
                           <button
                             key={page}
                             onClick={() => setPreviewPage(page)}
                             className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-all ${
-                              previewPage === page
-                                ? "bg-violet-500/20 text-white"
-                                : "text-white/40 hover:bg-white/5 hover:text-white/70"
+                              previewPage === page ? "bg-violet-500/20 text-white" : "text-white/40 hover:bg-white/5 hover:text-white/70"
                             }`}
                           >
-                            <span className="text-orange-400 text-[10px] font-bold shrink-0">H</span>
-                            <span className="text-xs truncate">{page}</span>
+                            <span className="shrink-0 text-[10px] font-bold text-orange-400">H</span>
+                            <span className="truncate text-xs">{page}</span>
                           </button>
                         ))}
                       </div>
@@ -778,110 +1013,103 @@ export default function BuilderPage() {
                 </div>
               </>
             ) : (
-              /* Editor */
+              /* ── Editor ── */
               <div className="flex flex-1 overflow-hidden">
                 {/* File explorer */}
-                <div className="flex w-52 shrink-0 flex-col border-r border-white/5 bg-[#0c0c14]">
-                  <div className="flex items-center justify-between border-b border-white/5 px-3 py-2.5">
+                <div
+                  className={`flex w-52 shrink-0 flex-col overflow-hidden border-r border-white/5 bg-[#0c0c14] ${dragOverPath === "__root__" ? "ring-1 ring-inset ring-violet-500/30" : ""}`}
+                  onDragOver={(e) => { e.preventDefault(); if (!draggedPathRef.current) return; setDragOverPath("__root__"); }}
+                  onDragLeave={() => setDragOverPath(null)}
+                  onDrop={(e) => {
+                    e.preventDefault(); setDragOverPath(null);
+                    if (draggedPathRef.current) { fsMoveEntry(draggedPathRef.current, ""); draggedPathRef.current = null; }
+                  }}
+                >
+                  {/* Header */}
+                  <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-3 py-2.5">
                     <div className="flex items-center gap-2">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/30">
                         <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
                       </svg>
                       <span className="text-[10px] font-semibold uppercase tracking-widest text-white/30">Explorer</span>
                     </div>
-                    <button
-                      onClick={() => { setIsAddingFile(true); setNewFileName(""); }}
-                      title="New file"
-                      className="rounded-md p-1 text-white/30 transition-all hover:bg-white/10 hover:text-white/70"
-                    >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                        <path d="M12 5v14M5 12h14"/>
-                      </svg>
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => { setAddingIn(""); setAddingType("file"); setAddingName(""); }}
+                        title="New file"
+                        className="rounded-md p-1 text-white/30 transition-all hover:bg-white/10 hover:text-white/70"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                          <polyline points="14 2 14 8 20 8"/>
+                          <line x1="12" y1="18" x2="12" y2="12"/>
+                          <line x1="9" y1="15" x2="15" y2="15"/>
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => { setAddingIn(""); setAddingType("folder"); setAddingName(""); }}
+                        title="New folder"
+                        className="rounded-md p-1 text-white/30 transition-all hover:bg-white/10 hover:text-white/70"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+                          <line x1="12" y1="11" x2="12" y2="17"/>
+                          <line x1="9" y1="14" x2="15" y2="14"/>
+                        </svg>
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="p-2">
-                    <div className="flex items-center gap-1.5 rounded-md px-2 py-1">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-yellow-400/70 shrink-0">
+                  {/* Tree */}
+                  <div className="flex-1 select-none overflow-y-auto py-2">
+                    <div className="mb-1 flex items-center gap-1.5 px-3 py-1">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="shrink-0 text-yellow-400/70">
                         <path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/>
                       </svg>
-                      <span className="text-xs text-white/50 truncate">{projectName}</span>
+                      <span className="truncate text-xs text-white/40">{projectName}</span>
                     </div>
 
-                    <div className="ml-3 mt-1 space-y-0.5 border-l border-white/5 pl-2">
-                      {availableFiles.map((file) => (
-                        <div key={file.name} className="group flex items-center gap-1">
-                          <button onClick={() => setSelectedFile(file.name)}
-                            className={`flex flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-all ${
-                              selectedFile === file.name ? "bg-violet-500/20 text-white" : "text-white/50 hover:bg-white/5 hover:text-white/80"
-                            }`}
-                          >
-                            <FileIcon type={file.icon} />
-                            <span className="text-xs truncate">{file.name}</span>
-                          </button>
-                          {file.name in extraFiles && (
-                            <button
-                              onClick={() => {
-                                const updated = { ...extraFiles };
-                                delete updated[file.name];
-                                setExtraFiles(updated);
-                                if (selectedFile === file.name) setSelectedFile("index.html");
-                              }}
-                              className="opacity-0 group-hover:opacity-100 rounded p-0.5 text-white/20 transition-all hover:text-red-400"
-                              title="Delete file"
-                            >
-                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M18 6L6 18M6 6l12 12"/>
-                              </svg>
-                            </button>
-                          )}
-                        </div>
+                    <div className="ml-2 space-y-0.5 border-l border-white/5 pl-2">
+                      {/* Base (AI-generated) files */}
+                      {baseFiles.map((f) => (
+                        <button key={f.path} onClick={() => setSelectedFile(f.path)}
+                          className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-all ${
+                            selectedFile === f.path ? "bg-violet-500/20 text-white" : "text-white/50 hover:bg-white/5 hover:text-white/80"
+                          }`}
+                        >
+                          <FileIcon path={f.path} />
+                          <span className="truncate text-xs">{f.path}</span>
+                        </button>
                       ))}
 
-                      {isAddingFile && (
-                        <div className="mt-1 flex items-center gap-1 rounded-md bg-white/5 px-2 py-1">
-                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-white/30">
-                            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
-                          </svg>
-                          <input
-                            autoFocus
-                            value={newFileName}
-                            onChange={(e) => setNewFileName(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") addNewFile();
-                              if (e.key === "Escape") { setIsAddingFile(false); setNewFileName(""); }
-                            }}
-                            onBlur={() => { if (!newFileName.trim()) { setIsAddingFile(false); setNewFileName(""); } }}
-                            placeholder="filename.html"
-                            className="w-full bg-transparent text-xs text-white/70 outline-none placeholder-white/20"
-                          />
-                        </div>
-                      )}
+                      {/* User file system */}
+                      {renderTree("", 0)}
                     </div>
                   </div>
                 </div>
 
-                {/* Monaco editor */}
+                {/* Monaco */}
                 <div className="flex flex-1 flex-col overflow-hidden">
-                  {/* Editor tabs */}
+                  {/* Tab */}
                   <div className="flex h-9 shrink-0 items-center border-b border-white/5 bg-[#0c0c14]">
-                    <div className={`flex h-full items-center gap-2 border-r border-white/5 px-4 text-xs ${
-                      selectedFile ? "bg-[#0d0d14] text-white/80" : "text-white/30"
-                    }`}>
-                      <FileIcon type={availableFiles.find(f => f.name === selectedFile)?.icon ?? "html"} />
-                      {selectedFile}
-                      <span className="ml-1 h-1.5 w-1.5 rounded-full bg-orange-400" title="Unsaved changes" />
+                    <div className={`flex h-full items-center gap-2 border-r border-white/5 px-4 text-xs ${selectedFile ? "bg-[#0d0d14] text-white/80" : "text-white/30"}`}>
+                      <FileIcon path={selectedFile} />
+                      <span>{selectedFile.split("/").pop()}</span>
+                      <span className="ml-1 h-1.5 w-1.5 rounded-full bg-orange-400" title="Ctrl+S to save" />
                     </div>
                   </div>
 
                   <div className="flex-1 overflow-hidden">
                     <MonacoEditor
                       height="100%"
-                      language={availableFiles.find(f => f.name === selectedFile)?.language ?? "html"}
+                      language={getPathLanguage(selectedFile)}
                       theme="vs-dark"
                       value={editorContent}
                       onChange={handleEditorChange}
-                      onMount={(editor) => {
+                      onMount={(editor, monaco) => {
+                        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+                          void saveCurrentProject();
+                        });
                         editor.onDidChangeCursorPosition((e) => {
                           setCursorInfo(`Ln ${e.position.lineNumber}, Col ${e.position.column}`);
                         });
@@ -914,7 +1142,7 @@ export default function BuilderPage() {
                     <div className="flex items-center gap-3 text-[10px] text-white/70">
                       <span>Surcodia Editor</span>
                       <span>·</span>
-                      <span>{availableFiles.find(f => f.name === selectedFile)?.language?.toUpperCase()}</span>
+                      <span>{getPathLanguage(selectedFile).toUpperCase()}</span>
                     </div>
                     <div className="flex items-center gap-3 text-[10px] text-white/70">
                       <span>{cursorInfo}</span>
@@ -927,12 +1155,14 @@ export default function BuilderPage() {
             )
           ) : (
             /* Empty state */
-            <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
+            <div className="relative flex flex-1 flex-col items-center justify-center gap-4 text-center">
               <div className="pointer-events-none absolute inset-0">
                 <div className="absolute left-1/2 top-1/2 h-[400px] w-[400px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-600/5 blur-[100px]" />
               </div>
-              <div className="relative rounded-2xl border border-white/5 p-12 animate-fade-in"
-                style={{ backgroundImage: `linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px)`, backgroundSize: "40px 40px" }}>
+              <div
+                className="animate-fade-in relative rounded-2xl border border-white/5 p-12"
+                style={{ backgroundImage: `linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px)`, backgroundSize: "40px 40px" }}
+              >
                 <div className="mb-4 inline-flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" strokeOpacity="0.4">
                     <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
@@ -949,15 +1179,21 @@ export default function BuilderPage() {
       {/* Project Modal */}
       {selectedProject && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setSelectedProject(null)} />
-          <div className="animate-slide-up relative flex h-[85vh] w-full max-w-5xl flex-col rounded-2xl border border-white/10 bg-[#0d0d16] shadow-2xl overflow-hidden">
+          <div className="animate-fade-in absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setSelectedProject(null)} />
+          <div className="animate-slide-up relative flex h-[85vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0d0d16] shadow-2xl">
             <div className="flex items-center justify-between border-b border-white/5 px-6 py-4">
               <div>
                 <h2 className="font-semibold text-white">{selectedProject.name}</h2>
-                <p className="text-xs text-white/30 mt-0.5">
+                <p className="mt-0.5 text-xs text-white/30">
                   {selectedProject.messages
-                    ? `${(JSON.parse(selectedProject.messages) as SerializedMessage[]).filter(m => m.role === "user").length} prompts in conversation`
-                    : "No conversation saved"}
+                    ? (() => {
+                        try {
+                          const d = JSON.parse(selectedProject.messages) as { messages?: SerializedMessage[] } | SerializedMessage[];
+                          const msgs = Array.isArray(d) ? d : (d.messages ?? []);
+                          return `${msgs.filter((m) => m.role === "user").length} prompts`;
+                        } catch { return "No conversation"; }
+                      })()
+                    : "No conversation"}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -992,7 +1228,7 @@ export default function BuilderPage() {
               {modalView === "preview"
                 ? <iframe srcDoc={selectedProject.html} className="h-full w-full bg-white" title={selectedProject.name} sandbox="allow-scripts" />
                 : <div className="h-full overflow-auto bg-[#0a0a0f]">
-                    <pre className="p-6 text-xs leading-relaxed text-green-400/80 font-mono whitespace-pre-wrap">{selectedProject.html}</pre>
+                    <pre className="p-6 font-mono text-xs leading-relaxed text-green-400/80 whitespace-pre-wrap">{selectedProject.html}</pre>
                   </div>
               }
             </div>

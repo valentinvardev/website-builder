@@ -18,22 +18,26 @@ export async function POST(req: Request) {
   const session = await auth();
   const userId = session?.user?.id ?? null;
 
-  const { name, html, messages, id } = await req.json() as {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+  const { name, html, messages, files, id } = await req.json() as {
     name: string;
     html: string;
     messages?: string;
+    files?: string;
     id?: string;
   };
 
   if (id) {
-    const project = await db.project.update({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const project = await (db.project.update as any)({
       where: { id },
-      data: { name, html, messages, updatedAt: new Date() },
-    });
+      data: { name, html, messages, files, updatedAt: new Date() },
+    }) as Record<string, unknown>;
     return Response.json(project);
   }
 
-  const project = await db.project.create({ data: { name, html, messages, userId } });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const project = await (db.project.create as any)({ data: { name, html, messages, files, userId } }) as Record<string, unknown>;
   return Response.json(project);
 }
 
