@@ -335,6 +335,12 @@ export default function BuilderPage() {
     showToast("Share link copied to clipboard!");
   }
 
+  async function openProjectDirect(project: SavedProject) {
+    const res = await fetch(`/api/projects/${project.id}`);
+    const full = await res.json() as SavedProject & { html: string; messages?: string };
+    loadProjectIntoBuilder(full);
+  }
+
   async function openProjectModal(project: SavedProject) {
     const res = await fetch(`/api/projects/${project.id}`);
     const full = await res.json() as SavedProject & { html: string; messages?: string };
@@ -443,8 +449,8 @@ export default function BuilderPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Device toggles — only in preview */}
-          {panelMode === "preview" && (
+          {/* Device toggles — animated fade when switching preview/editor */}
+          <div className={`overflow-hidden transition-all duration-200 ${panelMode === "preview" ? "max-w-[160px] opacity-100" : "max-w-0 opacity-0 pointer-events-none"}`}>
             <div className="flex items-center rounded-lg border border-white/5 bg-white/5 p-1">
               {(["desktop", "tablet", "mobile"] as DeviceMode[]).map((mode) => (
                 <button key={mode} onClick={() => setDeviceMode(mode)} title={mode}
@@ -455,7 +461,7 @@ export default function BuilderPage() {
                 </button>
               ))}
             </div>
-          )}
+          </div>
 
           {/* Panel mode toggle */}
           <div className="flex items-center rounded-lg border border-white/5 bg-white/5 p-1">
@@ -512,7 +518,25 @@ export default function BuilderPage() {
                 <span className="text-sm font-semibold">Saved projects</span>
                 <span className="rounded-full bg-white/5 px-2 py-0.5 text-xs text-white/40">{savedProjects.length}</span>
               </div>
-              <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              <div className="px-3 pt-3 pb-2">
+                <button
+                  onClick={() => {
+                    setMessages([]);
+                    setGeneratedHtml("");
+                    setProjectName("Untitled site");
+                    setCurrentProjectId(null);
+                    setCurrentShareId(null);
+                    setShowSidebar(false);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-3 py-2.5 text-xs text-white/40 transition-all hover:border-violet-500/30 hover:bg-violet-500/5 hover:text-violet-300"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M12 5v14M5 12h14"/>
+                  </svg>
+                  New project
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-2">
                 {savedProjects.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-16 text-center">
                     <div className="mb-3 text-3xl opacity-30">◎</div>
@@ -522,7 +546,7 @@ export default function BuilderPage() {
                   savedProjects.map((p) => (
                     <div key={p.id}
                       className={`group relative cursor-pointer rounded-xl border p-3 transition-all hover:border-white/10 hover:bg-white/[0.06] ${currentProjectId === p.id ? "border-violet-500/40 bg-violet-500/10" : "border-white/5 bg-white/[0.03]"}`}
-                      onClick={() => void openProjectModal(p)}
+                      onClick={() => void openProjectDirect(p)}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 flex-1">
