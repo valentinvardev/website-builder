@@ -50,3 +50,10 @@
   animation: shimmer 2s linear infinite;
 }
 .animate-pulse-dot { animation: pulse-dot 1.2s ease-in-out infinite; }
+
+/* Custom scrollbar — matches dark theme */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(139,92,246,0.45); }
+::-webkit-scrollbar-corner { background: transparent; }

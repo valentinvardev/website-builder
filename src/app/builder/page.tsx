@@ -636,9 +636,15 @@ export default function BuilderPage() {
                   onDragStart={(e) => { e.stopPropagation(); draggedPathRef.current = entry.path; }}
                   onDragEnd={() => { draggedPathRef.current = null; setDragOverPath(null); }}
                   onClick={() => fsToggleFolder(entry.path)}
-                  className={`group flex cursor-pointer items-center gap-1.5 rounded-md py-1 pr-2 text-white/50 transition-all hover:bg-white/5 hover:text-white/80 ${dragOverPath === entry.path ? "bg-violet-500/20 text-white ring-1 ring-violet-500/40" : ""}`}
+                  className={`group flex cursor-grab items-center gap-1.5 rounded-md py-1 pr-2 text-white/50 transition-all active:cursor-grabbing hover:bg-white/5 hover:text-white/80 ${dragOverPath === entry.path ? "bg-violet-500/20 text-white ring-1 ring-violet-500/40" : ""}`}
                   style={{ paddingLeft: `${indent}px` }}
                 >
+                  {/* drag handle */}
+                  <svg width="8" height="8" viewBox="0 0 8 12" fill="currentColor" className="shrink-0 text-white/0 transition-colors group-hover:text-white/20">
+                    <circle cx="2" cy="2" r="1"/><circle cx="6" cy="2" r="1"/>
+                    <circle cx="2" cy="6" r="1"/><circle cx="6" cy="6" r="1"/>
+                    <circle cx="2" cy="10" r="1"/><circle cx="6" cy="10" r="1"/>
+                  </svg>
                   <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" className={`shrink-0 transition-transform duration-150 ${entry.open ? "rotate-90" : ""}`}>
                     <path d="M2 1l4 3-4 3V1z"/>
                   </svg>
@@ -697,9 +703,15 @@ export default function BuilderPage() {
               onDragStart={(e) => { e.stopPropagation(); draggedPathRef.current = entry.path; }}
               onDragEnd={() => { draggedPathRef.current = null; setDragOverPath(null); }}
               onClick={() => setSelectedFile(entry.path)}
-              className={`group flex cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 transition-all ${selectedFile === entry.path ? "bg-violet-500/20 text-white" : "text-white/50 hover:bg-white/5 hover:text-white/80"}`}
-              style={{ paddingLeft: `${indent + 12}px` }}
+              className={`group flex cursor-grab items-center gap-2 rounded-md py-1.5 pr-2 transition-all active:cursor-grabbing ${selectedFile === entry.path ? "bg-violet-500/20 text-white" : "text-white/50 hover:bg-white/5 hover:text-white/80"}`}
+              style={{ paddingLeft: `${indent + 4}px` }}
             >
+              {/* drag handle */}
+              <svg width="8" height="8" viewBox="0 0 8 12" fill="currentColor" className="shrink-0 text-white/0 transition-colors group-hover:text-white/20">
+                <circle cx="2" cy="2" r="1"/><circle cx="6" cy="2" r="1"/>
+                <circle cx="2" cy="6" r="1"/><circle cx="6" cy="6" r="1"/>
+                <circle cx="2" cy="10" r="1"/><circle cx="6" cy="10" r="1"/>
+              </svg>
               <FileIcon path={entry.path} />
               <span className="flex-1 truncate text-xs">{name}</span>
               <button
