@@ -16,9 +16,10 @@ An AI-powered website builder where you describe what you want and get a fully g
 - **Live preview** — see the result in a sandboxed iframe with desktop / tablet / mobile responsive views
 - **Monaco editor** — edit the generated HTML, CSS, and JS directly with syntax highlighting
 - **Virtual file system** — create files and folders, drag & drop to reorganize, cross-file links (CSS/JS) resolved automatically in preview
+- **Deploy modal** — animated deploy flow with a live status badge, share URL, scaled site preview, and quick-access action buttons
 - **Project persistence** — projects (HTML, chat history, file system) saved to Supabase via Prisma
 - **Shareable links** — every project gets a public share URL
-- **Auth** — email/password sign-up and optional Discord OAuth via NextAuth v5
+- **Auth** — email/password sign-up via NextAuth v5 (credentials only)
 
 ---
 
@@ -67,8 +68,6 @@ GROQ_API_KEY="gsk_..."
 
 # Auth
 AUTH_SECRET="..."                   # generate with: openssl rand -base64 32
-AUTH_DISCORD_ID="..."               # optional — Discord OAuth
-AUTH_DISCORD_SECRET="..."           # optional — Discord OAuth
 ```
 
 ### 3. Push the database schema
