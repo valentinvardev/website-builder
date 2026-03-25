@@ -162,34 +162,43 @@ export default function BuilderPage() {
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let html = "";
+      let response = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        html += decoder.decode(value, { stream: true });
-        setGeneratedHtml(html);
+        response += decoder.decode(value, { stream: true });
+        // Only update preview if it looks like HTML
+        if (response.trimStart().startsWith("<")) {
+          setGeneratedHtml(response);
+        }
       }
+
+      const isHtml = response.trimStart().startsWith("<");
 
       const assistantMsg: Message = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: "Done! Your site is live in the preview. Ask me to tweak anything — layout, colors, content, new sections.",
-        htmlContent: html,
+        content: isHtml
+          ? "Done! Your site is live in the preview. Ask me to tweak anything — layout, colors, content, new sections."
+          : response,
+        htmlContent: isHtml ? response : undefined,
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, assistantMsg]);
 
-      // Auto-save / update project
-      const saveRes = await fetch("/api/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: projectName, html, id: currentProjectId ?? undefined }),
-      });
-      const saved = await saveRes.json() as SavedProject;
-      setCurrentProjectId(saved.id);
-      setCurrentShareId(saved.shareId);
-      void loadProjects();
+      // Only save if it was an HTML generation
+      if (isHtml) {
+        const saveRes = await fetch("/api/projects", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: projectName, html: response, id: currentProjectId ?? undefined }),
+        });
+        const saved = await saveRes.json() as SavedProject;
+        setCurrentProjectId(saved.id);
+        setCurrentShareId(saved.shareId);
+        void loadProjects();
+      }
     } catch (err) {
       console.error(err);
     } finally {
