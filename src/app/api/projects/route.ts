@@ -18,17 +18,22 @@ export async function POST(req: Request) {
   const session = await auth();
   const userId = session?.user?.id ?? null;
 
-  const { name, html, id } = await req.json() as { name: string; html: string; id?: string };
+  const { name, html, messages, id } = await req.json() as {
+    name: string;
+    html: string;
+    messages?: string;
+    id?: string;
+  };
 
   if (id) {
     const project = await db.project.update({
       where: { id },
-      data: { name, html, updatedAt: new Date() },
+      data: { name, html, messages, updatedAt: new Date() },
     });
     return Response.json(project);
   }
 
-  const project = await db.project.create({ data: { name, html, userId } });
+  const project = await db.project.create({ data: { name, html, messages, userId } });
   return Response.json(project);
 }
 

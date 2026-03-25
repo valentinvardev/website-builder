@@ -19,6 +19,7 @@ model Project {
     id        String   @id @default(cuid())
     name      String
     html      String
+    messages  String?
     shareId   String   @unique @default(cuid())
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt

@@ -1,19 +1,25 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { useSession, signOut } from "next-auth/react";
+import dynamic from "next/dynamic";
 
-type Message = {
+const MonacoEditor = dynamic(() => import("@monaco-editor/react"), { ssr: false });
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type SerializedMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
   htmlContent?: string;
-  timestamp: Date;
 };
 
+type Message = SerializedMessage & { timestamp: Date };
+
 type DeviceMode = "desktop" | "tablet" | "mobile";
-type ViewMode = "preview" | "code";
+type PanelMode = "preview" | "editor";
 
 type SavedProject = {
   id: string;
@@ -22,6 +28,14 @@ type SavedProject = {
   createdAt: string;
   updatedAt: string;
 };
+
+type VirtualFile = {
+  name: string;
+  language: "html" | "css" | "javascript";
+  icon: string;
+};
+
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const STARTER_PROMPTS = [
   "A SaaS landing page with dark theme, hero section, features grid, and pricing",
@@ -32,7 +46,7 @@ const STARTER_PROMPTS = [
 
 const FUNNY_PHRASES = [
   "Summoning pixels from the digital void...",
-  "Teaching Claude the secrets of good design...",
+  "Teaching the AI secrets of good design...",
   "Bribing the CSS gods with semicolons...",
   "Asking the color wheel for its blessing...",
   "Converting your vibe into pure HTML...",
@@ -45,8 +59,6 @@ const FUNNY_PHRASES = [
   "Running 47 A/B tests simultaneously...",
   "Whispering sweet nothings to the layout engine...",
   "Negotiating with flexbox (it's complicated)...",
-  "Making buttons look clickable since 2026...",
-  "Consulting the ancient CSS specification...",
 ];
 
 const DEVICE_SIZES: Record<DeviceMode, string> = {
@@ -55,29 +67,99 @@ const DEVICE_SIZES: Record<DeviceMode, string> = {
   mobile: "390px",
 };
 
+const ALL_FILES: VirtualFile[] = [
+  { name: "index.html", language: "html", icon: "html" },
+  { name: "styles.css", language: "css", icon: "css" },
+  { name: "app.js", language: "javascript", icon: "js" },
+];
+
+// ─── File parsing helpers ─────────────────────────────────────────────────────
+
+function getFileContent(html: string, fileName: string): string {
+  if (fileName === "index.html") return html;
+  if (fileName === "styles.css") {
+    const m = /<style[^>]*>([\s\S]*?)<\/style>/i.exec(html);
+    return m?.[1]?.trim() ?? "";
+  }
+  if (fileName === "app.js") {
+    const scripts: string[] = [];
+    const re = /<script(?![^>]*\bsrc\b)[^>]*>([\s\S]*?)<\/script>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null) {
+      if (m[1]?.trim()) scripts.push(m[1].trim());
+    }
+    return scripts.join("\n\n");
+  }
+  return "";
+}
+
+function applyFileContent(html: string, fileName: string, content: string): string {
+  if (fileName === "index.html") return content;
+  if (fileName === "styles.css") {
+    if (/<style[^>]*>/i.test(html)) {
+      return html.replace(/<style[^>]*>[\s\S]*?<\/style>/i, `<style>\n${content}\n</style>`);
+    }
+    return html.replace("</head>", `<style>\n${content}\n</style>\n</head>`);
+  }
+  if (fileName === "app.js") {
+    const hasInlineScript = /<script(?![^>]*\bsrc\b)[^>]*>[\s\S]*?<\/script>/i.test(html);
+    if (hasInlineScript) {
+      let first = true;
+      return html.replace(/<script(?![^>]*\bsrc\b)[^>]*>[\s\S]*?<\/script>/gi, (match) => {
+        if (first) { first = false; return `<script>\n${content}\n</script>`; }
+        return "";
+      });
+    }
+    return html.replace("</body>", `<script>\n${content}\n</script>\n</body>`);
+  }
+  return html;
+}
+
+function getAvailableFiles(html: string): VirtualFile[] {
+  return ALL_FILES.filter((f) => {
+    if (f.name === "index.html") return true;
+    return getFileContent(html, f.name).length > 0;
+  });
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
 export default function BuilderPage() {
   const { data: session } = useSession();
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedHtml, setGeneratedHtml] = useState("");
   const [deviceMode, setDeviceMode] = useState<DeviceMode>("desktop");
-  const [viewMode, setViewMode] = useState<ViewMode>("preview");
+  const [panelMode, setPanelMode] = useState<PanelMode>("preview");
   const [projectName, setProjectName] = useState("Untitled site");
   const [editingName, setEditingName] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
   const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [currentShareId, setCurrentShareId] = useState<string | null>(null);
-  const [selectedProject, setSelectedProject] = useState<(SavedProject & { html?: string }) | null>(null);
+  const [selectedProject, setSelectedProject] = useState<(SavedProject & { html?: string; messages?: string }) | null>(null);
   const [modalView, setModalView] = useState<"preview" | "code">("preview");
   const [toast, setToast] = useState<string | null>(null);
   const [phraseIndex, setPhraseIndex] = useState(0);
   const [phraseVisible, setPhraseVisible] = useState(true);
+  const [selectedFile, setSelectedFile] = useState<string>("index.html");
+  const [editorContent, setEditorContent] = useState<string>("");
+  const [cursorInfo, setCursorInfo] = useState("Ln 1, Col 1");
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
+
+  const availableFiles = useMemo(() => getAvailableFiles(generatedHtml), [generatedHtml]);
+
+  // Sync editor content when file or HTML changes
+  useEffect(() => {
+    if (generatedHtml) {
+      setEditorContent(getFileContent(generatedHtml, selectedFile));
+    }
+  }, [selectedFile, generatedHtml]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -87,7 +169,6 @@ export default function BuilderPage() {
     if (editingName) nameInputRef.current?.focus();
   }, [editingName]);
 
-  // Cycle funny phrases while generating
   useEffect(() => {
     if (!isGenerating) return;
     const cycle = setInterval(() => {
@@ -100,7 +181,6 @@ export default function BuilderPage() {
     return () => clearInterval(cycle);
   }, [isGenerating]);
 
-  // Auto-dismiss toast
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 3000);
@@ -122,9 +202,14 @@ export default function BuilderPage() {
     setSavedProjects(data);
   }, []);
 
-  useEffect(() => {
-    void loadProjects();
-  }, [loadProjects]);
+  useEffect(() => { void loadProjects(); }, [loadProjects]);
+
+  function handleEditorChange(value: string | undefined) {
+    if (!value || !generatedHtml) return;
+    setEditorContent(value);
+    const updated = applyFileContent(generatedHtml, selectedFile, value);
+    setGeneratedHtml(updated);
+  }
 
   async function handleSend() {
     const trimmed = input.trim();
@@ -173,12 +258,10 @@ export default function BuilderPage() {
         if (done) break;
         raw += decoder.decode(value, { stream: true });
 
-        // Detect mode once we have enough data
         if (isBuildMode === null && raw.length >= HTML_MARKER.length) {
           isBuildMode = raw.includes(HTML_MARKER);
         }
 
-        // Stream HTML into preview as it arrives
         if (isBuildMode) {
           const html = raw.replace(HTML_MARKER, "").trimStart();
           if (html) setGeneratedHtml(html);
@@ -198,13 +281,27 @@ export default function BuilderPage() {
         htmlContent: isHtml ? html : undefined,
         timestamp: new Date(),
       };
-      setMessages((prev) => [...prev, assistantMsg]);
+
+      const finalMessages = [...nextMessages, assistantMsg];
+      setMessages(finalMessages);
 
       if (isHtml) {
+        const serialized: SerializedMessage[] = finalMessages.map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          htmlContent: m.htmlContent,
+        }));
+
         const saveRes = await fetch("/api/projects", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: projectName, html, id: currentProjectId ?? undefined }),
+          body: JSON.stringify({
+            name: projectName,
+            html,
+            messages: JSON.stringify(serialized),
+            id: currentProjectId ?? undefined,
+          }),
         });
         const saved = await saveRes.json() as SavedProject;
         setCurrentProjectId(saved.id);
@@ -230,29 +327,43 @@ export default function BuilderPage() {
     textareaRef.current?.focus();
   }
 
-  function copyShareLink() {
-    if (!currentShareId) return;
-    const url = `${window.location.origin}/api/share/${currentShareId}`;
+  function copyShareLink(shareId?: string) {
+    const id = shareId ?? currentShareId;
+    if (!id) return;
+    const url = `${window.location.origin}/api/share/${id}`;
     void navigator.clipboard.writeText(url);
     showToast("Share link copied to clipboard!");
   }
 
-  function loadProjectIntoBuilder(project: SavedProject & { html?: string }) {
+  async function openProjectModal(project: SavedProject) {
+    const res = await fetch(`/api/projects/${project.id}`);
+    const full = await res.json() as SavedProject & { html: string; messages?: string };
+    setSelectedProject(full);
+    setModalView("preview");
+  }
+
+  function loadProjectIntoBuilder(project: SavedProject & { html?: string; messages?: string }) {
     if (!project.html) return;
     setGeneratedHtml(project.html);
     setProjectName(project.name);
     setCurrentProjectId(project.id);
     setCurrentShareId(project.shareId);
-    setMessages([]);
-    setShowSidebar(false);
-    showToast(`Loaded "${project.name}"`);
-  }
+    setSelectedFile("index.html");
 
-  async function openProjectModal(project: SavedProject) {
-    const res = await fetch(`/api/share/${project.shareId}`);
-    const html = await res.text();
-    setSelectedProject({ ...project, html });
-    setModalView("preview");
+    if (project.messages) {
+      try {
+        const msgs = JSON.parse(project.messages) as SerializedMessage[];
+        setMessages(msgs.map((m) => ({ ...m, timestamp: new Date() })));
+      } catch {
+        setMessages([]);
+      }
+    } else {
+      setMessages([]);
+    }
+
+    setShowSidebar(false);
+    setSelectedProject(null);
+    showToast(`Loaded "${project.name}"`);
   }
 
   async function deleteProject(id: string, e: React.MouseEvent) {
@@ -268,6 +379,13 @@ export default function BuilderPage() {
     }
     void loadProjects();
     showToast("Project deleted");
+  }
+
+  function FileIcon({ type }: { type: string }) {
+    if (type === "html") return <span className="text-orange-400 text-xs font-bold">H</span>;
+    if (type === "css") return <span className="text-blue-400 text-xs font-bold">C</span>;
+    if (type === "js") return <span className="text-yellow-400 text-xs font-bold">J</span>;
+    return <span className="text-white/40 text-xs">F</span>;
   }
 
   return (
@@ -305,28 +423,19 @@ export default function BuilderPage() {
                 className="rounded bg-white/10 px-2 py-0.5 text-sm font-medium outline-none ring-1 ring-violet-500/50"
               />
             ) : (
-              <button
-                onClick={() => setEditingName(true)}
-                className="text-sm font-medium text-white/80 transition-colors hover:text-white"
-              >
+              <button onClick={() => setEditingName(true)} className="text-sm font-medium text-white/80 hover:text-white transition-colors">
                 {projectName}
               </button>
             )}
           </div>
 
-          {/* Projects chevron */}
           <button
             onClick={() => setShowSidebar((s) => !s)}
             className={`ml-2 flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all ${
-              showSidebar
-                ? "border-violet-500/40 bg-violet-500/10 text-violet-300"
-                : "border-white/5 bg-white/5 text-white/40 hover:border-white/10 hover:text-white/70"
+              showSidebar ? "border-violet-500/40 bg-violet-500/10 text-violet-300" : "border-white/5 bg-white/5 text-white/40 hover:border-white/10 hover:text-white/70"
             }`}
           >
-            <svg
-              width="12" height="12" viewBox="0 0 12 12" fill="none"
-              className={`transition-transform duration-300 ${showSidebar ? "rotate-180" : ""}`}
-            >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className={`transition-transform duration-300 ${showSidebar ? "rotate-180" : ""}`}>
               <path d="M2 4.5L6 7.5L10 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
             Projects
@@ -334,74 +443,55 @@ export default function BuilderPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Device toggles */}
-          <div className="flex items-center rounded-lg border border-white/5 bg-white/5 p-1">
-            {(["desktop", "tablet", "mobile"] as DeviceMode[]).map((mode) => (
-              <button
-                key={mode}
-                onClick={() => setDeviceMode(mode)}
-                title={mode}
-                className={`rounded-md px-2.5 py-1 text-xs transition-all ${
-                  deviceMode === mode ? "bg-white/10 text-white" : "text-white/30 hover:text-white/60"
-                }`}
-              >
-                {mode === "desktop" && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>}
-                {mode === "tablet" && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="2" width="16" height="20" rx="2"/><circle cx="12" cy="18" r="1"/></svg>}
-                {mode === "mobile" && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="5" y="2" width="14" height="20" rx="2"/><circle cx="12" cy="18" r="1"/></svg>}
-              </button>
-            ))}
-          </div>
+          {/* Device toggles — only in preview */}
+          {panelMode === "preview" && (
+            <div className="flex items-center rounded-lg border border-white/5 bg-white/5 p-1">
+              {(["desktop", "tablet", "mobile"] as DeviceMode[]).map((mode) => (
+                <button key={mode} onClick={() => setDeviceMode(mode)} title={mode}
+                  className={`rounded-md px-2.5 py-1 transition-all ${deviceMode === mode ? "bg-white/10 text-white" : "text-white/30 hover:text-white/60"}`}>
+                  {mode === "desktop" && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>}
+                  {mode === "tablet" && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="2" width="16" height="20" rx="2"/><circle cx="12" cy="18" r="1"/></svg>}
+                  {mode === "mobile" && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="5" y="2" width="14" height="20" rx="2"/><circle cx="12" cy="18" r="1"/></svg>}
+                </button>
+              ))}
+            </div>
+          )}
 
-          {/* View toggle */}
+          {/* Panel mode toggle */}
           <div className="flex items-center rounded-lg border border-white/5 bg-white/5 p-1">
-            {(["preview", "code"] as ViewMode[]).map((mode) => (
-              <button
-                key={mode}
-                onClick={() => setViewMode(mode)}
-                className={`rounded-md px-3 py-1 text-xs font-medium capitalize transition-all ${
-                  viewMode === mode ? "bg-white/10 text-white" : "text-white/30 hover:text-white/60"
-                }`}
-              >
-                {mode}
+            {([["preview", "Preview"], ["editor", "Editor"]] as [PanelMode, string][]).map(([mode, label]) => (
+              <button key={mode} onClick={() => setPanelMode(mode)}
+                className={`rounded-md px-3 py-1 text-xs font-medium transition-all ${panelMode === mode ? "bg-white/10 text-white" : "text-white/30 hover:text-white/60"}`}>
+                {label}
               </button>
             ))}
           </div>
 
           <div className="h-4 w-px bg-white/10" />
 
-          {currentShareId && (
-            <button
-              onClick={copyShareLink}
-              className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/60 transition-all hover:bg-white/10 hover:text-white"
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
-              </svg>
-              Share
-            </button>
-          )}
-
-          <button className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold transition-all hover:bg-violet-500 hover:shadow-lg hover:shadow-violet-500/25">
-            Deploy →
+          {/* Deploy = Share link */}
+          <button
+            onClick={() => currentShareId ? copyShareLink() : showToast("Generate a site first!")}
+            className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold transition-all hover:bg-violet-500 hover:shadow-lg hover:shadow-violet-500/25"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
+            </svg>
+            Deploy
           </button>
 
           <div className="h-4 w-px bg-white/10" />
 
-          {/* User menu */}
+          {/* User */}
           <div className="flex items-center gap-2">
             <div className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 text-xs font-semibold text-white">
-              {session?.user?.image ? (
+              {session?.user?.image
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={session.user.image} alt="" className="h-full w-full object-cover" />
-              ) : (
-                session?.user?.name?.[0]?.toUpperCase() ?? "?"
-              )}
+                ? <img src={session.user.image} alt="" className="h-full w-full object-cover" />
+                : session?.user?.name?.[0]?.toUpperCase() ?? "?"}
             </div>
-            <button
-              onClick={() => void signOut({ callbackUrl: "/" })}
-              className="text-xs text-white/30 transition-colors hover:text-white/70"
-              title="Sign out"
-            >
+            <button onClick={() => void signOut({ callbackUrl: "/" })} title="Sign out"
+              className="text-white/30 transition-colors hover:text-white/70">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
               </svg>
@@ -413,13 +503,10 @@ export default function BuilderPage() {
       {/* Main */}
       <div className="flex flex-1 overflow-hidden relative">
 
-        {/* Projects Sidebar */}
+        {/* Projects sidebar */}
         {showSidebar && (
           <>
-            <div
-              className="absolute inset-0 z-20 bg-black/40 backdrop-blur-sm"
-              onClick={() => setShowSidebar(false)}
-            />
+            <div className="absolute inset-0 z-20 bg-black/40 backdrop-blur-sm" onClick={() => setShowSidebar(false)} />
             <div className="animate-slide-left absolute left-0 top-0 z-30 flex h-full w-72 flex-col border-r border-white/10 bg-[#0d0d16] shadow-2xl">
               <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
                 <span className="text-sm font-semibold">Saved projects</span>
@@ -429,17 +516,12 @@ export default function BuilderPage() {
                 {savedProjects.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-16 text-center">
                     <div className="mb-3 text-3xl opacity-30">◎</div>
-                    <p className="text-xs text-white/30">No saved projects yet.<br/>Generate a site to get started.</p>
+                    <p className="text-xs text-white/30">No saved projects yet.</p>
                   </div>
                 ) : (
                   savedProjects.map((p) => (
-                    <div
-                      key={p.id}
-                      className={`group relative cursor-pointer rounded-xl border p-3 transition-all hover:border-white/10 hover:bg-white/[0.06] ${
-                        currentProjectId === p.id
-                          ? "border-violet-500/40 bg-violet-500/10"
-                          : "border-white/5 bg-white/[0.03]"
-                      }`}
+                    <div key={p.id}
+                      className={`group relative cursor-pointer rounded-xl border p-3 transition-all hover:border-white/10 hover:bg-white/[0.06] ${currentProjectId === p.id ? "border-violet-500/40 bg-violet-500/10" : "border-white/5 bg-white/[0.03]"}`}
                       onClick={() => void openProjectModal(p)}
                     >
                       <div className="flex items-start justify-between gap-2">
@@ -449,10 +531,8 @@ export default function BuilderPage() {
                             {new Date(p.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                           </p>
                         </div>
-                        <button
-                          onClick={(e) => void deleteProject(p.id, e)}
-                          className="opacity-0 group-hover:opacity-100 rounded-md p-1 text-white/30 transition-all hover:bg-red-500/20 hover:text-red-400"
-                        >
+                        <button onClick={(e) => void deleteProject(p.id, e)}
+                          className="opacity-0 group-hover:opacity-100 rounded-md p-1 text-white/30 transition-all hover:bg-red-500/20 hover:text-red-400">
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <path d="M3 6h18M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/>
                           </svg>
@@ -466,7 +546,7 @@ export default function BuilderPage() {
           </>
         )}
 
-        {/* Left: Chat panel */}
+        {/* Chat panel */}
         <div className="flex w-[380px] shrink-0 flex-col border-r border-white/5">
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
             {messages.length === 0 ? (
@@ -480,11 +560,8 @@ export default function BuilderPage() {
                 <p className="mb-6 text-sm text-white/40">Describe your website and I&apos;ll generate it instantly.</p>
                 <div className="w-full space-y-2">
                   {STARTER_PROMPTS.map((prompt) => (
-                    <button
-                      key={prompt}
-                      onClick={() => handleStarterPrompt(prompt)}
-                      className="w-full rounded-xl border border-white/5 bg-white/[0.03] px-4 py-3 text-left text-xs text-white/50 transition-all hover:border-violet-500/30 hover:bg-violet-500/5 hover:text-white/80"
-                    >
+                    <button key={prompt} onClick={() => handleStarterPrompt(prompt)}
+                      className="w-full rounded-xl border border-white/5 bg-white/[0.03] px-4 py-3 text-left text-xs text-white/50 transition-all hover:border-violet-500/30 hover:bg-violet-500/5 hover:text-white/80">
                       {prompt}
                     </button>
                   ))}
@@ -492,12 +569,8 @@ export default function BuilderPage() {
               </div>
             ) : (
               <>
-                {messages.map((msg, i) => (
-                  <div
-                    key={msg.id}
-                    className={`flex gap-3 animate-slide-up ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                    style={{ animationDelay: `${i === messages.length - 1 ? 0 : 0}ms` }}
-                  >
+                {messages.map((msg) => (
+                  <div key={msg.id} className={`flex gap-3 animate-slide-up ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                     {msg.role === "assistant" && (
                       <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
@@ -506,9 +579,7 @@ export default function BuilderPage() {
                       </div>
                     )}
                     <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
-                      msg.role === "user"
-                        ? "rounded-br-sm bg-violet-600/80 text-white"
-                        : "rounded-bl-sm bg-white/5 text-white/80"
+                      msg.role === "user" ? "rounded-br-sm bg-violet-600/80 text-white" : "rounded-bl-sm bg-white/5 text-white/80"
                     }`}>
                       {msg.content}
                     </div>
@@ -525,20 +596,11 @@ export default function BuilderPage() {
                     <div className="rounded-2xl rounded-bl-sm bg-white/5 px-4 py-3 max-w-[80%]">
                       <div className="flex items-center gap-1.5 mb-2">
                         {[0, 1, 2].map((i) => (
-                          <span
-                            key={i}
-                            className="h-1.5 w-1.5 rounded-full bg-violet-400 animate-pulse-dot"
-                            style={{ animationDelay: `${i * 0.2}s` }}
-                          />
+                          <span key={i} className="h-1.5 w-1.5 rounded-full bg-violet-400 animate-pulse-dot" style={{ animationDelay: `${i * 0.2}s` }} />
                         ))}
                       </div>
-                      <div
-                        key={phraseIndex}
-                        className={`text-xs text-white/50 transition-opacity duration-400 ${phraseVisible ? "opacity-100" : "opacity-0"}`}
-                      >
-                        <span className="animate-shimmer font-medium">
-                          {FUNNY_PHRASES[phraseIndex]}
-                        </span>
+                      <div className={`text-xs text-white/50 transition-opacity duration-400 ${phraseVisible ? "opacity-100" : "opacity-0"}`}>
+                        <span className="animate-shimmer font-medium">{FUNNY_PHRASES[phraseIndex]}</span>
                       </div>
                     </div>
                   </div>
@@ -562,74 +624,147 @@ export default function BuilderPage() {
                 className="w-full resize-none bg-transparent px-4 py-3 pr-12 text-sm text-white placeholder-white/30 outline-none disabled:opacity-40"
                 style={{ maxHeight: "180px" }}
               />
-              <button
-                onClick={() => void handleSend()}
-                disabled={!input.trim() || isGenerating}
-                className="absolute bottom-2.5 right-2.5 flex h-8 w-8 items-center justify-center rounded-xl bg-violet-600 transition-all hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-30"
-              >
+              <button onClick={() => void handleSend()} disabled={!input.trim() || isGenerating}
+                className="absolute bottom-2.5 right-2.5 flex h-8 w-8 items-center justify-center rounded-xl bg-violet-600 transition-all hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-30">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
                   <path d="M12 19V5M5 12l7-7 7 7"/>
                 </svg>
               </button>
             </div>
-            <p className="mt-2 text-center text-[10px] text-white/20">
-              Shift + Enter for new line · Enter to send
-            </p>
+            <p className="mt-2 text-center text-[10px] text-white/20">Shift + Enter for new line · Enter to send</p>
           </div>
         </div>
 
-        {/* Right: Preview panel */}
+        {/* Right panel */}
         <div className="flex flex-1 flex-col overflow-hidden bg-[#0d0d14]">
           {generatedHtml ? (
-            <>
-              <div className="flex h-10 shrink-0 items-center justify-between border-b border-white/5 px-4">
-                <div className="flex items-center gap-2 text-xs text-white/30">
-                  <span className={`h-1.5 w-1.5 rounded-full ${isGenerating ? "animate-pulse bg-yellow-400" : "bg-green-400"}`} />
-                  {isGenerating ? "Updating..." : "Live preview"}
+            panelMode === "preview" ? (
+              /* Preview */
+              <>
+                <div className="flex h-10 shrink-0 items-center justify-between border-b border-white/5 px-4">
+                  <div className="flex items-center gap-2 text-xs text-white/30">
+                    <span className={`h-1.5 w-1.5 rounded-full ${isGenerating ? "animate-pulse bg-yellow-400" : "bg-green-400"}`} />
+                    {isGenerating ? "Updating..." : "Live preview"}
+                  </div>
+                  {deviceMode !== "desktop" && <span className="text-xs text-white/30">{DEVICE_SIZES[deviceMode]}</span>}
                 </div>
-                {deviceMode !== "desktop" && (
-                  <span className="text-xs text-white/30">{DEVICE_SIZES[deviceMode]}</span>
-                )}
-              </div>
-              <div className="flex flex-1 items-start justify-center overflow-auto p-6">
-                {viewMode === "preview" ? (
-                  <div
-                    className="h-full overflow-hidden rounded-xl border border-white/10 bg-white shadow-2xl shadow-black/50 transition-all duration-300"
-                    style={{ width: DEVICE_SIZES[deviceMode], minHeight: "100%" }}
-                  >
-                    <iframe
-                      srcDoc={generatedHtml}
-                      className="h-full w-full"
-                      style={{ minHeight: "600px" }}
-                      title="Preview"
-                      sandbox="allow-scripts"
+                <div className="flex flex-1 items-start justify-center overflow-auto p-6">
+                  <div className="h-full overflow-hidden rounded-xl border border-white/10 bg-white shadow-2xl shadow-black/50 transition-all duration-300"
+                    style={{ width: DEVICE_SIZES[deviceMode], minHeight: "100%" }}>
+                    <iframe srcDoc={generatedHtml} className="h-full w-full" style={{ minHeight: "600px" }} title="Preview" sandbox="allow-scripts" />
+                  </div>
+                </div>
+              </>
+            ) : (
+              /* Editor */
+              <div className="flex flex-1 overflow-hidden">
+                {/* File explorer */}
+                <div className="flex w-52 shrink-0 flex-col border-r border-white/5 bg-[#0c0c14]">
+                  <div className="flex items-center gap-2 border-b border-white/5 px-3 py-2.5">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/30">
+                      <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+                    </svg>
+                    <span className="text-[10px] font-semibold uppercase tracking-widest text-white/30">Explorer</span>
+                  </div>
+
+                  <div className="p-2">
+                    <div className="flex items-center gap-1.5 rounded-md px-2 py-1">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-yellow-400/70 shrink-0">
+                        <path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/>
+                      </svg>
+                      <span className="text-xs text-white/50 truncate">{projectName}</span>
+                    </div>
+
+                    <div className="ml-3 mt-1 space-y-0.5 border-l border-white/5 pl-2">
+                      {availableFiles.map((file) => (
+                        <button key={file.name} onClick={() => setSelectedFile(file.name)}
+                          className={`group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-all ${
+                            selectedFile === file.name ? "bg-violet-500/20 text-white" : "text-white/50 hover:bg-white/5 hover:text-white/80"
+                          }`}
+                        >
+                          <FileIcon type={file.icon} />
+                          <span className="text-xs truncate">{file.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Monaco editor */}
+                <div className="flex flex-1 flex-col overflow-hidden">
+                  {/* Editor tabs */}
+                  <div className="flex h-9 shrink-0 items-center border-b border-white/5 bg-[#0c0c14]">
+                    <div className={`flex h-full items-center gap-2 border-r border-white/5 px-4 text-xs ${
+                      selectedFile ? "bg-[#0d0d14] text-white/80" : "text-white/30"
+                    }`}>
+                      <FileIcon type={availableFiles.find(f => f.name === selectedFile)?.icon ?? "html"} />
+                      {selectedFile}
+                      <span className="ml-1 h-1.5 w-1.5 rounded-full bg-orange-400" title="Unsaved changes" />
+                    </div>
+                  </div>
+
+                  <div className="flex-1 overflow-hidden">
+                    <MonacoEditor
+                      height="100%"
+                      language={availableFiles.find(f => f.name === selectedFile)?.language ?? "html"}
+                      theme="vs-dark"
+                      value={editorContent}
+                      onChange={handleEditorChange}
+                      onMount={(editor) => {
+                        editor.onDidChangeCursorPosition((e) => {
+                          setCursorInfo(`Ln ${e.position.lineNumber}, Col ${e.position.column}`);
+                        });
+                      }}
+                      options={{
+                        fontSize: 13,
+                        fontFamily: "var(--font-geist-sans), 'Cascadia Code', 'Fira Code', monospace",
+                        minimap: { enabled: true },
+                        wordWrap: "on",
+                        scrollBeyondLastLine: false,
+                        automaticLayout: true,
+                        lineNumbers: "on",
+                        renderLineHighlight: "all",
+                        bracketPairColorization: { enabled: true },
+                        formatOnPaste: true,
+                        tabSize: 2,
+                        padding: { top: 12 },
+                        scrollbar: { verticalScrollbarSize: 6, horizontalScrollbarSize: 6 },
+                      }}
+                      loading={
+                        <div className="flex h-full items-center justify-center bg-[#1e1e1e]">
+                          <div className="text-xs text-white/30">Loading editor...</div>
+                        </div>
+                      }
                     />
                   </div>
-                ) : (
-                  <div className="h-full w-full overflow-auto rounded-xl border border-white/5 bg-[#0a0a0f]">
-                    <pre className="p-6 text-xs leading-relaxed text-green-400/80 font-mono whitespace-pre-wrap">
-                      {generatedHtml}
-                    </pre>
+
+                  {/* Status bar */}
+                  <div className="flex h-6 shrink-0 items-center justify-between border-t border-white/5 bg-violet-700/80 px-3">
+                    <div className="flex items-center gap-3 text-[10px] text-white/70">
+                      <span>Surcodia Editor</span>
+                      <span>·</span>
+                      <span>{availableFiles.find(f => f.name === selectedFile)?.language?.toUpperCase()}</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-[10px] text-white/70">
+                      <span>{cursorInfo}</span>
+                      <span>UTF-8</span>
+                      <span>Spaces: 2</span>
+                    </div>
                   </div>
-                )}
+                </div>
               </div>
-            </>
+            )
           ) : (
+            /* Empty state */
             <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
               <div className="pointer-events-none absolute inset-0">
                 <div className="absolute left-1/2 top-1/2 h-[400px] w-[400px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-600/5 blur-[100px]" />
               </div>
-              <div
-                className="relative rounded-2xl border border-white/5 p-12 animate-fade-in"
-                style={{
-                  backgroundImage: `linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px)`,
-                  backgroundSize: "40px 40px",
-                }}
-              >
+              <div className="relative rounded-2xl border border-white/5 p-12 animate-fade-in"
+                style={{ backgroundImage: `linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px)`, backgroundSize: "40px 40px" }}>
                 <div className="mb-4 inline-flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" strokeOpacity="0.4">
-                    <rect x="3" y="3" width="18" height="18" rx="2"/>
-                    <path d="M3 9h18M9 21V9"/>
+                    <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
                   </svg>
                 </div>
                 <h3 className="mb-2 text-base font-semibold text-white/60">Your site will appear here</h3>
@@ -643,80 +778,52 @@ export default function BuilderPage() {
       {/* Project Modal */}
       {selectedProject && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
-          <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-fade-in"
-            onClick={() => setSelectedProject(null)}
-          />
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setSelectedProject(null)} />
           <div className="animate-slide-up relative flex h-[85vh] w-full max-w-5xl flex-col rounded-2xl border border-white/10 bg-[#0d0d16] shadow-2xl overflow-hidden">
-            {/* Modal header */}
             <div className="flex items-center justify-between border-b border-white/5 px-6 py-4">
               <div>
                 <h2 className="font-semibold text-white">{selectedProject.name}</h2>
                 <p className="text-xs text-white/30 mt-0.5">
-                  Last updated {new Date(selectedProject.updatedAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+                  {selectedProject.messages
+                    ? `${(JSON.parse(selectedProject.messages) as SerializedMessage[]).filter(m => m.role === "user").length} prompts in conversation`
+                    : "No conversation saved"}
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                {/* View tabs */}
                 <div className="flex rounded-lg border border-white/5 bg-white/5 p-1">
                   {(["preview", "code"] as const).map((v) => (
-                    <button
-                      key={v}
-                      onClick={() => setModalView(v)}
-                      className={`rounded-md px-3 py-1 text-xs font-medium capitalize transition-all ${
-                        modalView === v ? "bg-white/10 text-white" : "text-white/30 hover:text-white/60"
-                      }`}
-                    >
+                    <button key={v} onClick={() => setModalView(v)}
+                      className={`rounded-md px-3 py-1 text-xs font-medium capitalize transition-all ${modalView === v ? "bg-white/10 text-white" : "text-white/30 hover:text-white/60"}`}>
                       {v}
                     </button>
                   ))}
                 </div>
-                <button
-                  onClick={() => {
-                    const url = `${window.location.origin}/api/share/${selectedProject.shareId}`;
-                    void navigator.clipboard.writeText(url);
-                    showToast("Share link copied!");
-                  }}
-                  className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/60 transition-all hover:bg-white/10 hover:text-white"
-                >
+                <button onClick={() => copyShareLink(selectedProject.shareId)}
+                  className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/60 transition-all hover:bg-white/10 hover:text-white">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
                   </svg>
                   Copy share link
                 </button>
-                <button
-                  onClick={() => { loadProjectIntoBuilder(selectedProject); setSelectedProject(null); }}
-                  className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold transition-all hover:bg-violet-500"
-                >
+                <button onClick={() => loadProjectIntoBuilder(selectedProject)}
+                  className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold transition-all hover:bg-violet-500">
                   Open in builder
                 </button>
-                <button
-                  onClick={() => setSelectedProject(null)}
-                  className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-white/40 transition-all hover:text-white"
-                >
+                <button onClick={() => setSelectedProject(null)}
+                  className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-white/40 transition-all hover:text-white">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M18 6L6 18M6 6l12 12"/>
                   </svg>
                 </button>
               </div>
             </div>
-
-            {/* Modal content */}
             <div className="flex-1 overflow-hidden">
-              {modalView === "preview" ? (
-                <iframe
-                  srcDoc={selectedProject.html}
-                  className="h-full w-full bg-white"
-                  title={selectedProject.name}
-                  sandbox="allow-scripts"
-                />
-              ) : (
-                <div className="h-full overflow-auto bg-[#0a0a0f]">
-                  <pre className="p-6 text-xs leading-relaxed text-green-400/80 font-mono whitespace-pre-wrap">
-                    {selectedProject.html}
-                  </pre>
-                </div>
-              )}
+              {modalView === "preview"
+                ? <iframe srcDoc={selectedProject.html} className="h-full w-full bg-white" title={selectedProject.name} sandbox="allow-scripts" />
+                : <div className="h-full overflow-auto bg-[#0a0a0f]">
+                    <pre className="p-6 text-xs leading-relaxed text-green-400/80 font-mono whitespace-pre-wrap">{selectedProject.html}</pre>
+                  </div>
+              }
             </div>
           </div>
         </div>
