@@ -1,7 +1,7 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import Groq from "groq-sdk";
 import { env } from "~/env";
 
-const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
+const groq = new Groq({ apiKey: env.GROQ_API_KEY });
 
 const SYSTEM_PROMPT = `You are Surcodia, an expert web designer and developer. Your job is to generate complete, beautiful, production-quality HTML websites based on user prompts.
 
@@ -19,29 +19,27 @@ Rules:
 export async function POST(req: Request) {
   const body = await req.json() as { messages: { role: string; content: string }[] };
 
-  const history = body.messages.slice(0, -1).map((m) => ({
-    role: m.role === "user" ? "user" : "model",
-    parts: [{ text: m.content }],
-  }));
-
-  const lastMessage = body.messages[body.messages.length - 1]!;
-
-  const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",
-    systemInstruction: SYSTEM_PROMPT,
-  });
-
-  const chat = model.startChat({ history });
-
   try {
-    const result = await chat.sendMessageStream(lastMessage.content);
+    const stream = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile",
+      max_tokens: 8192,
+      stream: true,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        ...body.messages.map((m) => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        })),
+      ],
+    });
 
     const encoder = new TextEncoder();
 
     const readable = new ReadableStream({
       async start(controller) {
-        for await (const chunk of result.stream) {
-          controller.enqueue(encoder.encode(chunk.text()));
+        for await (const chunk of stream) {
+          const text = chunk.choices[0]?.delta?.content ?? "";
+          if (text) controller.enqueue(encoder.encode(text));
         }
         controller.close();
       },
@@ -51,7 +49,7 @@ export async function POST(req: Request) {
       headers: { "Content-Type": "text/plain; charset=utf-8" },
     });
   } catch (err) {
-    console.error("[/api/generate] Gemini error:", err);
+    console.error("[/api/generate] Groq error:", err);
     return new Response(JSON.stringify({ error: String(err) }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
