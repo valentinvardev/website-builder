@@ -179,7 +179,6 @@ export default function BuilderPage() {
   const [addingType, setAddingType] = useState<"file" | "folder">("file");
   const [addingName, setAddingName] = useState("");
   const [dragOverPath, setDragOverPath] = useState<string | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
   const draggedPathRef = useRef<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -352,6 +351,27 @@ export default function BuilderPage() {
 
   // ─── AI generation ───────────────────────────────────────────────────────────
 
+  function buildFileContext(): string {
+    const lines: string[] = [];
+    if (generatedHtml) {
+      lines.push("index.html  ← main AI-generated page (loaded in preview)");
+      if (getFileContent(generatedHtml, "styles.css").length > 0) lines.push("styles.css  ← embedded styles");
+      if (getFileContent(generatedHtml, "app.js").length > 0) lines.push("app.js  ← embedded scripts");
+    }
+    const sorted = [...fileSystem].sort((a, b) => a.path.localeCompare(b.path));
+    for (const entry of sorted) {
+      if (entry.type === "folder") {
+        lines.push(`${entry.path}/  (folder)`);
+      } else {
+        const snippet = entry.content.length < 400
+          ? `\n\`\`\`\n${entry.content.trim()}\n\`\`\``
+          : `  (${entry.content.length} chars)`;
+        lines.push(`${entry.path}${snippet}`);
+      }
+    }
+    return lines.length > 0 ? lines.join("\n") : "";
+  }
+
   async function handleSend() {
     const trimmed = input.trim();
     if (!trimmed || isGenerating) return;
@@ -377,6 +397,7 @@ export default function BuilderPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: nextMessages.map((m) => ({ role: m.role, content: m.htmlContent ?? m.content })),
+          fileContext: buildFileContext(),
         }),
       });
 
@@ -601,12 +622,12 @@ export default function BuilderPage() {
               <div key={entry.path}>
                 <div
                   draggable
-                  onDragStart={(e) => { e.stopPropagation(); draggedPathRef.current = entry.path; setIsDragging(true); }}
-                  onDragEnd={() => { draggedPathRef.current = null; setIsDragging(false); setDragOverPath(null); }}
+                  onDragStart={(e) => { e.stopPropagation(); draggedPathRef.current = entry.path; }}
+                  onDragEnd={() => { draggedPathRef.current = null; setDragOverPath(null); }}
                   onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragOverPath(entry.path); }}
                   onDragLeave={(e) => { e.stopPropagation(); setDragOverPath(null); }}
                   onDrop={(e) => {
-                    e.preventDefault(); e.stopPropagation(); setDragOverPath(null); setIsDragging(false);
+                    e.preventDefault(); e.stopPropagation(); setDragOverPath(null);
                     if (draggedPathRef.current && draggedPathRef.current !== entry.path)
                       fsMoveEntry(draggedPathRef.current, entry.path);
                     draggedPathRef.current = null;
@@ -665,8 +686,8 @@ export default function BuilderPage() {
             <div
               key={entry.path}
               draggable
-              onDragStart={(e) => { e.stopPropagation(); draggedPathRef.current = entry.path; setIsDragging(true); }}
-              onDragEnd={() => { draggedPathRef.current = null; setIsDragging(false); setDragOverPath(null); }}
+              onDragStart={(e) => { e.stopPropagation(); draggedPathRef.current = entry.path; }}
+              onDragEnd={() => { draggedPathRef.current = null; setDragOverPath(null); }}
               onClick={() => setSelectedFile(entry.path)}
               className={`group flex cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 transition-all ${selectedFile === entry.path ? "bg-violet-500/20 text-white" : "text-white/50 hover:bg-white/5 hover:text-white/80"}`}
               style={{ paddingLeft: `${indent + 12}px` }}
@@ -701,7 +722,6 @@ export default function BuilderPage() {
           fsMoveEntry(draggedPathRef.current, "");
           draggedPathRef.current = null;
           setDragOverPath(null);
-          setIsDragging(false);
         }
       }}
     >
@@ -1091,18 +1111,18 @@ export default function BuilderPage() {
                       {/* User file system */}
                       {renderTree("", 0)}
 
-                      {/* Root drop zone — visible while dragging to provide a clear target */}
-                      {isDragging && (
+                      {/* Root drop zone — always visible so it can always receive drop events */}
+                      {fileSystem.length > 0 && (
                         <div
                           onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragOverPath("__root__"); }}
-                          onDragLeave={(e) => { e.stopPropagation(); setDragOverPath(null); }}
+                          onDragLeave={(e) => { e.stopPropagation(); setDragOverPath(prev => prev === "__root__" ? null : prev); }}
                           onDrop={(e) => {
-                            e.preventDefault(); e.stopPropagation(); setDragOverPath(null); setIsDragging(false);
+                            e.preventDefault(); e.stopPropagation(); setDragOverPath(null);
                             if (draggedPathRef.current) { fsMoveEntry(draggedPathRef.current, ""); draggedPathRef.current = null; }
                           }}
-                          className={`mt-1 rounded-md border border-dashed py-1.5 text-center text-[10px] transition-all ${dragOverPath === "__root__" ? "border-violet-500/60 bg-violet-500/10 text-violet-300" : "border-white/10 text-white/20"}`}
+                          className={`mt-2 rounded-md border border-dashed py-2 text-center text-[10px] transition-all select-none ${dragOverPath === "__root__" ? "border-violet-500/60 bg-violet-500/10 text-violet-300" : "border-white/5 text-white/15 hover:border-white/10 hover:text-white/25"}`}
                         >
-                          drop here → root
+                          ↑ drop here to move to root
                         </div>
                       )}
                     </div>

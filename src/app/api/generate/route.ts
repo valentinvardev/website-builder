@@ -27,7 +27,14 @@ Use when the user asks to build, create, generate, make, or modify a website or 
 CRITICAL: In BUILD MODE your entire response must be %%SURCODIA_HTML%% followed by the HTML. Nothing else.`;
 
 export async function POST(req: Request) {
-  const body = await req.json() as { messages: { role: string; content: string }[] };
+  const body = await req.json() as {
+    messages: { role: string; content: string }[];
+    fileContext?: string;
+  };
+
+  const systemPrompt = body.fileContext
+    ? `${SYSTEM_PROMPT}\n\n## WORKSPACE FILES\nThe user's project currently has these files:\n\`\`\`\n${body.fileContext}\n\`\`\`\nWhen the user asks to modify or create a specific file, acknowledge which file you're working on.`
+    : SYSTEM_PROMPT;
 
   try {
     const stream = await groq.chat.completions.create({
@@ -35,7 +42,7 @@ export async function POST(req: Request) {
       max_tokens: 8192,
       stream: true,
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
+        { role: "system", content: systemPrompt },
         ...body.messages.map((m) => ({
           role: m.role as "user" | "assistant",
           content: m.content,
